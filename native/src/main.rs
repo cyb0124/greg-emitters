@@ -23,14 +23,16 @@ macro_rules! dyn_abi {
 }
 
 pub mod asm;
-mod emitter_tile;
+mod client_utils;
+mod emitter_blocks;
+mod emitter_items;
+mod geometry;
 mod global;
-mod greg;
 pub mod jvm;
 mod mapping;
 pub mod mapping_base;
 mod registry;
-mod transformer;
+mod tile_utils;
 
 extern crate alloc;
 use alloc::{ffi::CString, format};
@@ -85,14 +87,14 @@ unsafe impl GlobalAlloc for GlobalEnv {
     }
 }
 
-fn entry_common(jni: &'static JNI, tf_srv_cls: usize) {
+fn entry_common(jni: &'static JNI, inst: usize) {
     let jvm = jni.get_jvm().unwrap();
     let owned_ti = jvm.get_jvmti().unwrap();
     unsafe { ENV.jvm = Some(GlobalJVM { jvm, ti: owned_ti.raw }) }
     core::mem::forget(owned_ti);
-    let tf_srv_cls = BorrowedRef::new(jni, &tf_srv_cls);
-    unsafe { ENV.objs = Some(GlobalObjs::new(&tf_srv_cls)) }
-    transformer::init(&tf_srv_cls)
+    let inst = BorrowedRef::new(jni, &inst);
+    unsafe { ENV.objs = Some(GlobalObjs::new(inst.get_object_class())) }
+    registry::init()
 }
 
 #[cfg(target_arch = "x86_64")]
