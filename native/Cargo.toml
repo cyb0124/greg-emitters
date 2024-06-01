@@ -1,0 +1,22 @@
+[package]
+name = "native"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1.0.82", default-features = false }
+bstr = { version = "1.9.1", default-features = false, features = ["alloc"] }
+hashbrown = { version = "0.14.3", default-features = false, features = ["ahash", "inline-more"] }
+macros = { version = "0.1.0", path = "../macros" }
+mapping_macros = { version = "0.1.0", path = "../../mcct/mapping_macros" }
+nalgebra = { version = "0.32.5", default-features = false, features = ["macros", "libm"] }
+postcard = { version = "1.0.8", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.198", default-features = false, features = ["alloc", "derive"] }
+simba = { version = "0.8.1", default-features = false }
+
+[profile.release]
+strip = "symbols"
+panic = "abort"
+lto = "fat"
+codegen-units = 1
+opt-level=3

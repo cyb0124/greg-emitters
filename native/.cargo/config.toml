@@ -1,0 +1,9 @@
+[target.x64-custom]
+rustflags = ["-C", "link-args=--oformat binary -T map.ld -Map target/x64.txt"]
+
+[target.aarch64-custom]
+rustflags = ["-C", "link-args=--oformat binary -T map.ld -Map target/aarch64.txt"]
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
