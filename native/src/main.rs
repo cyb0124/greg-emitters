@@ -23,6 +23,7 @@ macro_rules! dyn_abi {
 }
 
 pub mod asm;
+mod cleaner;
 mod client_utils;
 mod emitter_blocks;
 mod emitter_items;

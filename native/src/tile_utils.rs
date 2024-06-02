@@ -1,15 +1,17 @@
 use crate::{
     asm::*,
-    global::ClassNamer,
+    global::{ClassNamer, GlobalObjs},
     jvm::*,
     mapping::{CN, MN},
     mapping_base::*,
     objs,
 };
 use alloc::sync::Arc;
-use core::mem::transmute;
+use core::{ffi::CStr, mem::transmute};
 use macros::dyn_abi;
 
+pub const TAG_SERVER: &CStr = c"s";
+pub const TAG_CLIENT: &CStr = c"c";
 pub type TileMakerFn = fn(&'static JNI, pos: usize, state: usize) -> usize;
 pub struct TileUtils {
     supplier_cls: GlobalRef<'static>,
@@ -43,4 +45,16 @@ fn tile_supplier_create(jni: &'static JNI, this: usize, pos: usize, state: usize
     let p = objs().tile_utils.supplier_p;
     let func: TileMakerFn = unsafe { transmute(BorrowedRef::new(jni, &this).get_long_field(p)) };
     func(jni, pos, state)
+}
+
+pub fn tile_get_update_packet_impl<'a>(jni: &'a JNI) -> LocalRef<'a> {
+    let GlobalObjs { av, mn, .. } = objs();
+    let insns = [
+        av.new_var_insn(jni, OP_ALOAD, 0).unwrap(),
+        mn.s2c_tile_data_create.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap(),
+        av.new_insn(jni, OP_ARETURN).unwrap(),
+    ];
+    let method = mn.tile_get_update_packet.new_method_node(av, jni, ACC_PUBLIC).unwrap();
+    method.method_insns(av).unwrap().append_insns(av, insns).unwrap();
+    method
 }

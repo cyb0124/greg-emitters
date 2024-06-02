@@ -101,11 +101,13 @@ pub struct CN<T> {
     pub block_beh: T,
     pub block_beh_props: T,
     pub block_getter: T,
+    pub level: T,
     pub base_tile_block: T,
     pub tile_block: T,
     pub resource_key: T,
     pub item: T,
     pub item_props: T,
+    pub item_stack: T,
     pub block_item: T,
     pub tile: T,
     pub tile_supplier: T,
@@ -122,6 +124,13 @@ pub struct CN<T> {
     pub voxel_shape: T,
     pub shapes: T,
     pub collision_ctx: T,
+    pub use_on_ctx: T,
+    pub interaction_result: T,
+    pub s2c_tile_data: T,
+    pub nbt_compound: T,
+    pub packet: T,
+    pub living_entity: T,
+    pub dir: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -145,11 +154,13 @@ impl CN<Arc<CSig>> {
             block_beh: b"net.minecraft.world.level.block.state.BlockBehaviour",
             block_beh_props: b"net.minecraft.world.level.block.state.BlockBehaviour$Properties",
             block_getter: b"net.minecraft.world.level.BlockGetter",
+            level: b"net.minecraft.world.level.Level",
             base_tile_block: b"net.minecraft.world.level.block.BaseEntityBlock",
             tile_block: b"net.minecraft.world.level.block.EntityBlock",
             resource_key: b"net.minecraft.resources.ResourceKey",
             item: b"net.minecraft.world.item.Item",
             item_props: b"net.minecraft.world.item.Item$Properties",
+            item_stack: b"net.minecraft.world.item.ItemStack",
             block_item: b"net.minecraft.world.item.BlockItem",
             tile: b"net.minecraft.world.level.block.entity.BlockEntity",
             tile_supplier: b"net.minecraft.world.level.block.entity.BlockEntityType$BlockEntitySupplier",
@@ -166,6 +177,13 @@ impl CN<Arc<CSig>> {
             render_shape: b"net.minecraft.world.level.block.RenderShape",
             resource_loc: b"net.minecraft.resources.ResourceLocation",
             collision_ctx: b"net.minecraft.world.phys.shapes.CollisionContext",
+            use_on_ctx: b"net.minecraft.world.item.context.UseOnContext",
+            interaction_result: b"net.minecraft.world.InteractionResult",
+            s2c_tile_data: b"net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket",
+            nbt_compound: b"net.minecraft.nbt.CompoundTag",
+            packet: b"net.minecraft.network.protocol.Packet",
+            living_entity: b"net.minecraft.world.entity.LivingEntity",
+            dir: b"net.minecraft.core.Direction",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -189,6 +207,7 @@ impl CN<Arc<CSig>> {
 pub struct MN<T> {
     pub base_tile_block_init: T,
     pub tile_block_new_tile: T,
+    pub block_set_placed_by: T,
     pub block_beh_props_of: T,
     pub block_beh_props_strength: T,
     pub block_beh_props_dyn_shape: T,
@@ -196,15 +215,26 @@ pub struct MN<T> {
     pub block_beh_get_render_shape: T,
     pub block_beh_get_shape: T,
     pub block_item_init: T,
+    pub block_getter_get_tile: T,
     pub tile_supplier_create: T,
     pub tile_type_init: T,
     pub tile_init: T,
+    pub tile_load: T,
+    pub tile_get_update_tag: T,
+    pub tile_get_update_packet: T,
     pub sound_type_metal: T,
     pub item_get_desc_id: T,
+    pub item_use_on: T,
     pub creative_tab_items_gen_accept: T,
     pub render_shape_tile: T,
     pub resource_loc_init: T,
     pub shapes_create: T,
+    pub s2c_tile_data_create: T,
+    pub nbt_compound_init: T,
+    pub nbt_compound_put_byte_array: T,
+    pub nbt_compound_get_byte_array: T,
+    pub use_on_ctx_get_clicked_face: T,
+    pub dir_get_3d_value: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -235,6 +265,20 @@ impl MN<MSig> {
                 owner: cn.tile_block.clone(),
                 name: cs("m_142194_"),
                 sig: msig([cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes()], cn.tile.sig.to_bytes()),
+            },
+            block_set_placed_by: MSig {
+                owner: cn.block.clone(),
+                name: cs("m_6402_"),
+                sig: msig(
+                    [
+                        cn.level.sig.to_bytes(),
+                        cn.block_pos.sig.to_bytes(),
+                        cn.block_state.sig.to_bytes(),
+                        cn.living_entity.sig.to_bytes(),
+                        cn.item_stack.sig.to_bytes(),
+                    ],
+                    b"V",
+                ),
             },
             block_beh_props_of: MSig { owner: cn.block_beh_props.clone(), name: cs("m_284310_"), sig: msig([], cn.block_beh_props.sig.to_bytes()) },
             block_beh_props_strength: MSig {
@@ -270,6 +314,11 @@ impl MN<MSig> {
                 name: cs("<init>"),
                 sig: msig([cn.block.sig.to_bytes(), cn.item_props.sig.to_bytes()], b"V"),
             },
+            block_getter_get_tile: MSig {
+                owner: cn.block_getter.clone(),
+                name: cs("m_7702_"),
+                sig: msig([cn.block_pos.sig.to_bytes()], cn.tile.sig.to_bytes()),
+            },
             tile_supplier_create: MSig {
                 owner: cn.tile_supplier.clone(),
                 name: cs("m_155267_"),
@@ -285,8 +334,16 @@ impl MN<MSig> {
                 name: cs("<init>"),
                 sig: msig([cn.tile_type.sig.to_bytes(), cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes()], b"V"),
             },
+            tile_load: MSig { owner: cn.tile.clone(), name: cs("m_142466_"), sig: msig([cn.nbt_compound.sig.to_bytes()], b"V") },
+            tile_get_update_tag: MSig { owner: cn.tile.clone(), name: cs("m_5995_"), sig: msig([], cn.nbt_compound.sig.to_bytes()) },
+            tile_get_update_packet: MSig { owner: cn.tile.clone(), name: cs("m_58483_"), sig: msig([], cn.packet.sig.to_bytes()) },
             sound_type_metal: MSig { owner: cn.sound_type.clone(), name: cs("f_56743_"), sig: cn.sound_type.sig.clone() },
             item_get_desc_id: MSig { owner: cn.item.clone(), name: cs("m_5524_"), sig: cs("()Ljava/lang/String;") },
+            item_use_on: MSig {
+                owner: cn.item.clone(),
+                name: cs("m_6225_"),
+                sig: msig([cn.use_on_ctx.sig.to_bytes()], cn.interaction_result.sig.to_bytes()),
+            },
             creative_tab_items_gen_accept: MSig {
                 owner: cn.creative_tab_items_gen.clone(),
                 name: cs("m_257865_"),
@@ -295,6 +352,16 @@ impl MN<MSig> {
             render_shape_tile: MSig { owner: cn.render_shape.clone(), name: cs("ENTITYBLOCK_ANIMATED"), sig: cn.render_shape.sig.clone() },
             resource_loc_init: MSig { owner: cn.resource_loc.clone(), name: cs("<init>"), sig: cs("(Ljava/lang/String;Ljava/lang/String;)V") },
             shapes_create: MSig { owner: cn.shapes.clone(), name: cs("m_166049_"), sig: msig([B("DDDDDD")], cn.voxel_shape.sig.to_bytes()) },
+            s2c_tile_data_create: MSig {
+                owner: cn.s2c_tile_data.clone(),
+                name: cs("m_195640_"),
+                sig: msig([cn.tile.sig.to_bytes()], cn.s2c_tile_data.sig.to_bytes()),
+            },
+            nbt_compound_init: MSig { owner: cn.nbt_compound.clone(), name: cs("<init>"), sig: cs("()V") },
+            nbt_compound_put_byte_array: MSig { owner: cn.nbt_compound.clone(), name: cs("m_128382_"), sig: cs("(Ljava/lang/String;[B)V") },
+            nbt_compound_get_byte_array: MSig { owner: cn.nbt_compound.clone(), name: cs("m_128463_"), sig: cs("(Ljava/lang/String;)[B") },
+            use_on_ctx_get_clicked_face: MSig { owner: cn.use_on_ctx.clone(), name: cs("m_43719_"), sig: msig([], cn.dir.sig.to_bytes()) },
+            dir_get_3d_value: MSig { owner: cn.dir.clone(), name: cs("m_122411_"), sig: cs("()I") },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -340,17 +407,27 @@ pub struct MV {
     pub block_beh_props_sound: usize,
     pub block_item: GlobalRef<'static>,
     pub block_item_init: usize,
+    pub block_getter_get_tile: usize,
     pub tile_type: GlobalRef<'static>,
     pub tile_type_init: usize,
+    pub tile: GlobalRef<'static>,
     pub tile_init: usize,
+    pub tile_load: usize,
     pub sound_type_metal: GlobalRef<'static>,
     pub item: GlobalRef<'static>,
     pub item_get_desc_id: usize,
+    pub block_item_use_on: usize,
     pub render_shape_tile: GlobalRef<'static>,
     pub resource_loc: GlobalRef<'static>,
     pub resource_loc_init: usize,
     pub shapes: GlobalRef<'static>,
     pub shapes_create: usize,
+    pub nbt_compound: GlobalRef<'static>,
+    pub nbt_compound_init: usize,
+    pub nbt_compound_put_byte_array: usize,
+    pub nbt_compound_get_byte_array: usize,
+    pub use_on_ctx_get_clicked_face: usize,
+    pub dir_get_3d_value: usize,
     pub client: Option<MVC>,
 }
 
@@ -377,6 +454,7 @@ impl MV {
         let base_tile_block = load(&cn.base_tile_block);
         let block_beh_props = load(&cn.block_beh_props);
         let block_item = load(&cn.block_item);
+        let block_getter = load(&cn.block_getter);
         let tile_type = load(&cn.tile_type);
         let tile = load(&cn.tile);
         let sound_type = load(&cn.sound_type);
@@ -384,6 +462,9 @@ impl MV {
         let render_shape = load(&cn.render_shape);
         let resource_loc = load(&cn.resource_loc);
         let shapes = load(&cn.shapes);
+        let nbt_compound = load(&cn.nbt_compound);
+        let use_on_ctx = load(&cn.use_on_ctx);
+        let dir = load(&cn.dir);
         MV {
             base_tile_block_init: mn.base_tile_block_init.get_method_id(&base_tile_block).unwrap(),
             block_beh_props_of: mn.block_beh_props_of.get_static_method_id(&block_beh_props).unwrap(),
@@ -392,10 +473,14 @@ impl MV {
             block_beh_props_sound: mn.block_beh_props_sound.get_method_id(&block_beh_props).unwrap(),
             block_beh_props,
             block_item_init: mn.block_item_init.get_method_id(&block_item).unwrap(),
+            block_item_use_on: mn.item_use_on.get_method_id(&block_item).unwrap(),
             block_item,
+            block_getter_get_tile: mn.block_getter_get_tile.get_method_id(&block_getter).unwrap(),
             tile_type_init: mn.tile_type_init.get_method_id(&tile_type).unwrap(),
             tile_type,
             tile_init: mn.tile_init.get_method_id(&tile).unwrap(),
+            tile_load: mn.tile_load.get_method_id(&tile).unwrap(),
+            tile,
             sound_type_metal: static_field(&sound_type, &mn.sound_type_metal),
             item_get_desc_id: mn.item_get_desc_id.get_method_id(&item).unwrap(),
             item,
@@ -404,6 +489,12 @@ impl MV {
             resource_loc,
             shapes_create: mn.shapes_create.get_static_method_id(&shapes).unwrap(),
             shapes,
+            nbt_compound_init: mn.nbt_compound_init.get_method_id(&nbt_compound).unwrap(),
+            nbt_compound_put_byte_array: mn.nbt_compound_put_byte_array.get_method_id(&nbt_compound).unwrap(),
+            nbt_compound_get_byte_array: mn.nbt_compound_get_byte_array.get_method_id(&nbt_compound).unwrap(),
+            nbt_compound,
+            use_on_ctx_get_clicked_face: mn.use_on_ctx_get_clicked_face.get_method_id(&use_on_ctx).unwrap(),
+            dir_get_3d_value: mn.dir_get_3d_value.get_method_id(&dir).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);

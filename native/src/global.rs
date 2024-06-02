@@ -1,5 +1,6 @@
 use crate::{
     asm::*,
+    cleaner::Cleaner,
     client_utils::Sprites,
     emitter_blocks::EmitterBlocks,
     emitter_items::EmitterItems,
@@ -26,6 +27,7 @@ pub struct GlobalObjs {
     pub mv: MV,
     pub namer: ClassNamer,
     pub writer_cls: GlobalRef<'static>,
+    pub cleaner: Cleaner,
     pub tile_utils: TileUtils,
     pub greg_reg_item_stub: MSig,
     pub greg_creative_tab_stub: MSig,
@@ -88,10 +90,11 @@ impl GlobalObjs {
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
             tile_utils: TileUtils::new(&av, &cn, &mn, &namer),
+            cleaner: Cleaner::new(&av, &namer),
             gmn: GregMN::new(&gcn),
-            cn,
             namer,
             gcn,
+            cn,
             av,
             fg,
             mn,
