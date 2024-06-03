@@ -2,7 +2,7 @@ use crate::{
     asm::*,
     cleaner::Cleanable,
     client_utils::{read_pose, DrawContext},
-    geometry::{new_voxel_shape, DIR_ATTS},
+    geometry::{lerp, new_voxel_shape, DIR_ATTS},
     global::{GlobalObjs, Tier},
     jvm::*,
     mapping_base::{Functor, MBOptExt},
@@ -13,6 +13,7 @@ use crate::{
 use alloc::{format, sync::Arc};
 use bstr::BStr;
 use core::{
+    array,
     cell::RefCell,
     f32::consts::{PI, TAU},
 };
@@ -181,84 +182,49 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
     const N_SEGS: usize = 8;
     let base = vector![RADIUS, libm::tanf(PI / N_SEGS as f32) * RADIUS];
     let bot_y = LEG_LEN - 0.5;
-    let bot_g = tf * point![0., bot_y, 0.];
+    let bot_q = tf * point![0., bot_y, 0.];
+    let bot_m = tf * vector![0., -1., 0.];
     let top_y = RADIUS;
-    let top_g = tf * point![0., top_y * 0.7, 0.];
-    let mut p0 = CONTOUR.map(|(r, h, _)| {
-        let base = base * r;
-        let y = bot_y * (1. - h) + top_y * h;
-        point![base.x, y, base.y]
-    });
-    let mut g0 = p0.map(|p| tf * p);
+    let top_p = point![0., lerp(bot_y, top_y, 0.7), 0.];
+    let top_q = tf * top_p;
+    let mut p0 = CONTOUR.map(|(r, h, _)| point![base.x * r, lerp(bot_y, top_y, h), base.y * r]);
+    let mut q0 = p0.map(|p| tf * p);
+    let mut n0: [_; 4] = array::from_fn(|i| (p0.get(i + 1).unwrap_or(&top_p) - p0[i]).cross(&vector![-base.y, 0., base.x]).normalize());
+    let mut m0 = n0.map(|n| tf * n);
     let rot = UnitQuaternion::from_euler_angles(0., TAU / N_SEGS as f32, 0.);
     let spr = lk.tiers[tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
     for _ in 0..N_SEGS / 2 {
-        let p1 = p0.map(|p| rot * p);
-        let p2 = p1.map(|p| rot * p);
-        let g1 = p1.map(|p| tf * p);
-        let g2 = p2.map(|p| tf * p);
+        let (p1, n1) = (p0.map(|p| rot * p), n0.map(|n| rot * n));
+        let (p2, n2) = (p1.map(|p| rot * p), n1.map(|n| rot * n));
+        let (q1, m1) = (p1.map(|p| tf * p), n1.map(|n| tf * n));
+        let (q2, m2) = (p2.map(|p| tf * p), n2.map(|n| tf * n));
+        // Side Contour
         for i in 0..CONTOUR.len() - 1 {
             let v0 = spr.lerp_v(CONTOUR[i].2);
             let v1 = spr.lerp_v(CONTOUR[i + 1].2);
-            let n = (g1[i] - g0[i]).cross(&(g0[i + 1] - g0[i])).normalize();
-            dc.vertex(g0[i], n, spr.uv0.x, v0);
-            dc.vertex(g1[i], n, spr.uv1.x, v0);
-            dc.vertex(g1[i + 1], n, spr.uv1.x, v1);
-            dc.vertex(g0[i + 1], n, spr.uv0.x, v1);
-            let n = (g2[i] - g1[i]).cross(&(g2[i + 1] - g1[i])).normalize();
-            dc.vertex(g1[i], n, spr.uv1.x, v0);
-            dc.vertex(g2[i], n, spr.uv0.x, v0);
-            dc.vertex(g2[i + 1], n, spr.uv0.x, v1);
-            dc.vertex(g1[i + 1], n, spr.uv1.x, v1);
+            dc.vertex(q0[i], m0[i], spr.uv0.x, v0);
+            dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
+            dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
+            dc.vertex(q0[i + 1], m0[i], spr.uv0.x, v1);
+            dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
+            dc.vertex(q2[i], m2[i], spr.uv0.x, v0);
+            dc.vertex(q2[i + 1], m2[i], spr.uv0.x, v1);
+            dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
         }
         // Bottom Cap
-        let n0 = (g0[0] - bot_g).cross(&(g1[0] - bot_g)).normalize();
-        let n2 = (g1[0] - bot_g).cross(&(g2[0] - bot_g)).normalize();
-        let n1 = (n0 + n2).normalize();
         let v = spr.lerp_v(CONTOUR[0].2);
-        dc.vertex(bot_g, n1, spr.uv1.x, spr.uv1.y);
-        dc.vertex(g2[0], n2, spr.uv0.x, v);
-        dc.vertex(g1[0], n1, spr.uv1.x, v);
-        dc.vertex(g0[0], n0, spr.uv0.x, v);
+        dc.vertex(bot_q, bot_m, spr.uv1.x, spr.uv1.y);
+        dc.vertex(q2[0], bot_m, spr.uv0.x, v);
+        dc.vertex(q1[0], bot_m, spr.uv1.x, v);
+        dc.vertex(q0[0], bot_m, spr.uv0.x, v);
         // Top Cap
-        let n0 = (top_g - g0.last().unwrap()).cross(&(top_g - g1.last().unwrap())).normalize();
-        let n2 = (top_g - g1.last().unwrap()).cross(&(top_g - g2.last().unwrap())).normalize();
-        let n1 = (n0 + n2).normalize();
         let v = spr.lerp_v(CONTOUR.last().unwrap().2);
-        dc.vertex(top_g, n1, spr.uv1.x, spr.uv1.y);
-        dc.vertex(*g0.last().unwrap(), n0, spr.uv0.x, v);
-        dc.vertex(*g1.last().unwrap(), n1, spr.uv1.x, v);
-        dc.vertex(*g2.last().unwrap(), n2, spr.uv1.x, v);
-        (p0 = p2, g0 = g2);
+        dc.vertex(top_q, *m1.last().unwrap(), spr.uv1.x, spr.uv1.y);
+        dc.vertex(*q0.last().unwrap(), *m0.last().unwrap(), spr.uv0.x, v);
+        dc.vertex(*q1.last().unwrap(), *m1.last().unwrap(), spr.uv1.x, v);
+        dc.vertex(*q2.last().unwrap(), *m2.last().unwrap(), spr.uv1.x, v);
+        (p0 = p2, q0 = q2, n0 = n2, m0 = m2);
     }
-    /*
-    const CYL_LEN: f32 = 0.5 + RADIUS - LEG_LEN;
-    let seg_len = libm::tanf(PI / N_SEGS as f32) * RADIUS * 2.;
-    let mut face = Translation3::new(0., LEG_LEN + CYL_LEN * 0.5 - 0.5, RADIUS) * Affine3::from_subset(&Scale3::new(seg_len, CYL_LEN, 1.));
-    let bot_n = (tf * vector![0., -1., 0.]).normalize();
-    let bot_center = tf * point![0., LEG_LEN - 0.5, 0.];
-    let mut prev_lb = point![0., 0., 0.];
-    for i in 0..N_SEGS {
-        let tf = tf * face;
-        let face_n = (tf * vector![0., 0., 1.]).normalize();
-        let (lb, rb) = (tf * point![-0.5, -0.5, 0.], tf * point![0.5, -0.5, 0.]);
-        let (lt, rt) = (tf * point![-0.5, 0.5, 0.], tf * point![0.5, 0.5, 0.]);
-        // Side
-        dc.vertex(lb, face_n, spr.uv0.x, spr.uv0.y);
-        dc.vertex(rb, face_n, spr.uv1.x, spr.uv0.y);
-        dc.vertex(rt, face_n, spr.uv1.x, spr.uv1.y);
-        dc.vertex(lt, face_n, spr.uv0.x, spr.uv1.y);
-        if (i & 1) == 1 {
-            // Bottom Cap
-            dc.vertex(bot_center, bot_n, spr.lerp_u(0.5), spr.uv1.y);
-            dc.vertex(rb, bot_n, spr.uv1.x, spr.uv0.y);
-            dc.vertex(lb, bot_n, spr.lerp_u(0.5), spr.uv0.y);
-            dc.vertex(prev_lb, bot_n, spr.uv0.x, spr.uv0.y)
-        }
-        face = rot * face;
-        prev_lb = lb
-    }
-    */
 }
 
 #[dyn_abi]

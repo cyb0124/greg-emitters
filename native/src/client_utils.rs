@@ -1,4 +1,4 @@
-use crate::{global::GlobalMtx, jvm::*, mapping_base::*, objs};
+use crate::{geometry::lerp, global::GlobalMtx, jvm::*, mapping_base::*, objs};
 use core::{ffi::CStr, mem::MaybeUninit};
 use nalgebra::{point, vector, Affine3, ArrayStorage, Matrix4, Point2, Point3, Vector3};
 
@@ -29,9 +29,8 @@ impl Sprite {
         }
     }
 
-    pub fn lerp_u(&self, t: f32) -> f32 { self.uv0.x * (1. - t) + self.uv1.x * t }
-    pub fn lerp_v(&self, t: f32) -> f32 { self.uv0.y * (1. - t) + self.uv1.y * t }
-
+    pub fn lerp_u(&self, t: f32) -> f32 { lerp(self.uv0.x, self.uv1.x, t) }
+    pub fn lerp_v(&self, t: f32) -> f32 { lerp(self.uv0.y, self.uv1.y, t) }
     pub fn sub(&self, u0: f32, v0: f32, u1: f32, v1: f32) -> Self {
         Self { uv0: point![self.lerp_u(u0), self.lerp_v(v0)], uv1: point![self.lerp_u(u1), self.lerp_v(v1)] }
     }
