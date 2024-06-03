@@ -1,4 +1,4 @@
-use crate::{asm::*, client_utils::Sprites, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping_base::*, objs, ti};
+use crate::{asm::*, client_utils::Sprite, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping_base::*, objs, ti};
 use alloc::{format, vec::Vec};
 use core::ffi::{c_char, CStr};
 use macros::dyn_abi;
@@ -65,13 +65,23 @@ fn on_forge_renderers(jni: &JNI, _: usize, evt: usize) {
 #[dyn_abi]
 fn on_forge_atlas(jni: &'static JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
-    let GlobalObjs { av, mv, fg, mtx, .. } = objs();
+    let GlobalObjs { av, cn, mn, mv, fg, mtx, .. } = objs();
     let fgc = fg.client.uref();
     let mvc = mv.client.uref();
     let atlas = evt.call_object_method(fgc.atlas_evt_get_atlas, &[]).unwrap().unwrap();
     let loc = atlas.call_object_method(mvc.atlas_loc, &[]).unwrap().unwrap();
     if loc.equals(&av.jv, mvc.atlas_loc_blocks.raw).unwrap() {
-        mtx.lock(jni).unwrap().sprites.get_or_insert_with(|| Sprites::new(&atlas));
+        let mut lk = mtx.lock(jni).unwrap();
+        lk.sheets_solid.get_or_insert_with(|| {
+            let sheets = av.ldr.with_jni(atlas.jni()).load_class(&av.jv, &cn.sheets.dot).unwrap();
+            let sheets_solid = mn.sheets_solid.get_static_method_id(&sheets).unwrap();
+            sheets.call_static_object_method(sheets_solid, &[]).unwrap().unwrap().new_global_ref().unwrap()
+        });
+        lk.greg_wire = Some(Sprite::new(&atlas, c"gtceu", c"block/cable/wire"));
+        for tier in &mut lk.tiers {
+            let name = cs(Vec::from_iter([b"item/", &*tier.name, b"_emitter"].into_iter().flatten().copied()));
+            tier.emitter_sprite = Some(Sprite::new(&atlas, c"gtceu", &name))
+        }
     }
 }
 

@@ -216,12 +216,15 @@ pub struct MN<T> {
     pub block_beh_get_shape: T,
     pub block_item_init: T,
     pub block_getter_get_tile: T,
+    pub block_state_get_block: T,
     pub tile_supplier_create: T,
     pub tile_type_init: T,
     pub tile_init: T,
     pub tile_load: T,
     pub tile_get_update_tag: T,
     pub tile_get_update_packet: T,
+    pub tile_save_additional: T,
+    pub tile_get_block_state: T,
     pub sound_type_metal: T,
     pub item_get_desc_id: T,
     pub item_use_on: T,
@@ -319,6 +322,7 @@ impl MN<MSig> {
                 name: cs("m_7702_"),
                 sig: msig([cn.block_pos.sig.to_bytes()], cn.tile.sig.to_bytes()),
             },
+            block_state_get_block: MSig { owner: cn.block_state.clone(), name: cs("m_60734_"), sig: msig([], cn.block.sig.to_bytes()) },
             tile_supplier_create: MSig {
                 owner: cn.tile_supplier.clone(),
                 name: cs("m_155267_"),
@@ -337,6 +341,8 @@ impl MN<MSig> {
             tile_load: MSig { owner: cn.tile.clone(), name: cs("m_142466_"), sig: msig([cn.nbt_compound.sig.to_bytes()], b"V") },
             tile_get_update_tag: MSig { owner: cn.tile.clone(), name: cs("m_5995_"), sig: msig([], cn.nbt_compound.sig.to_bytes()) },
             tile_get_update_packet: MSig { owner: cn.tile.clone(), name: cs("m_58483_"), sig: msig([], cn.packet.sig.to_bytes()) },
+            tile_save_additional: MSig { owner: cn.tile.clone(), name: cs("m_183515_"), sig: msig([cn.nbt_compound.sig.to_bytes()], b"V") },
+            tile_get_block_state: MSig { owner: cn.tile.clone(), name: cs("m_58900_"), sig: msig([], cn.block_state.sig.to_bytes()) },
             sound_type_metal: MSig { owner: cn.sound_type.clone(), name: cs("f_56743_"), sig: cn.sound_type.sig.clone() },
             item_get_desc_id: MSig { owner: cn.item.clone(), name: cs("m_5524_"), sig: cs("()Ljava/lang/String;") },
             item_use_on: MSig {
@@ -408,11 +414,14 @@ pub struct MV {
     pub block_item: GlobalRef<'static>,
     pub block_item_init: usize,
     pub block_getter_get_tile: usize,
+    pub block_state_get_block: usize,
     pub tile_type: GlobalRef<'static>,
     pub tile_type_init: usize,
     pub tile: GlobalRef<'static>,
     pub tile_init: usize,
     pub tile_load: usize,
+    pub tile_save_additional: usize,
+    pub tile_get_block_state: usize,
     pub sound_type_metal: GlobalRef<'static>,
     pub item: GlobalRef<'static>,
     pub item_get_desc_id: usize,
@@ -455,6 +464,7 @@ impl MV {
         let block_beh_props = load(&cn.block_beh_props);
         let block_item = load(&cn.block_item);
         let block_getter = load(&cn.block_getter);
+        let block_state = load(&cn.block_state);
         let tile_type = load(&cn.tile_type);
         let tile = load(&cn.tile);
         let sound_type = load(&cn.sound_type);
@@ -476,10 +486,13 @@ impl MV {
             block_item_use_on: mn.item_use_on.get_method_id(&block_item).unwrap(),
             block_item,
             block_getter_get_tile: mn.block_getter_get_tile.get_method_id(&block_getter).unwrap(),
+            block_state_get_block: mn.block_state_get_block.get_method_id(&block_state).unwrap(),
             tile_type_init: mn.tile_type_init.get_method_id(&tile_type).unwrap(),
             tile_type,
             tile_init: mn.tile_init.get_method_id(&tile).unwrap(),
             tile_load: mn.tile_load.get_method_id(&tile).unwrap(),
+            tile_save_additional: mn.tile_save_additional.get_method_id(&tile).unwrap(),
+            tile_get_block_state: mn.tile_get_block_state.get_method_id(&tile).unwrap(),
             tile,
             sound_type_metal: static_field(&sound_type, &mn.sound_type_metal),
             item_get_desc_id: mn.item_get_desc_id.get_method_id(&item).unwrap(),

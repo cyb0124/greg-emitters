@@ -11,7 +11,7 @@ use core::{ffi::CStr, mem::transmute};
 use macros::dyn_abi;
 
 pub const TAG_SERVER: &CStr = c"s";
-pub const TAG_CLIENT: &CStr = c"c";
+pub const TAG_COMMON: &CStr = c"c";
 pub type TileMakerFn = fn(&'static JNI, pos: usize, state: usize) -> usize;
 pub struct TileUtils {
     supplier_cls: GlobalRef<'static>,

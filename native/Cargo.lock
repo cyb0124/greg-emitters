@@ -133,6 +133,7 @@ dependencies = [
  "anyhow",
  "bstr",
  "hashbrown",
+ "libm",
  "macros",
  "mapping_macros",
  "nalgebra",

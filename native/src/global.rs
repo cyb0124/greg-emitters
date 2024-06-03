@@ -1,7 +1,7 @@
 use crate::{
     asm::*,
     cleaner::Cleaner,
-    client_utils::Sprites,
+    client_utils::Sprite,
     emitter_blocks::EmitterBlocks,
     emitter_items::EmitterItems,
     jvm::*,
@@ -38,13 +38,15 @@ pub struct Tier {
     pub volt: i64,
     pub name: Box<[u8]>,
     pub has_emitter: bool,
+    pub emitter_sprite: Option<Sprite>,
     pub emitter_block: Option<GlobalRef<'static>>,
 }
 
 #[derive(Default)]
 pub struct GlobalMtx {
     pub gmv: Option<GregMV>,
-    pub sprites: Option<Sprites>,
+    pub sheets_solid: Option<GlobalRef<'static>>,
+    pub greg_wire: Option<Sprite>,
     pub emitter_items: Option<EmitterItems>,
     pub emitter_blocks: Option<EmitterBlocks>,
     pub tier_lookup: HashMap<Box<[u8]>, u8>,
@@ -132,7 +134,7 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
         for (tier, &volt) in tier_volts.iter().enumerate() {
             let name: Box<[u8]> = gmv.tier_names.get_object_elem(tier as _).unwrap().unwrap().utf_chars().unwrap().to_ascii_lowercase().into();
             lk.tier_lookup.insert(name.clone(), tier as _);
-            lk.tiers.push(Tier { volt, name, has_emitter: false, emitter_block: None })
+            lk.tiers.push(Tier { volt, name, has_emitter: false, emitter_sprite: None, emitter_block: None })
         }
         drop(tier_volts);
         lk.gmv = Some(gmv)

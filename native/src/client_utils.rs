@@ -1,4 +1,4 @@
-use crate::{asm::*, global::GlobalObjs, jvm::*, mapping_base::*, objs};
+use crate::{global::GlobalMtx, jvm::*, mapping_base::*, objs};
 use core::{ffi::CStr, mem::MaybeUninit};
 use nalgebra::{point, vector, Affine3, ArrayStorage, Matrix4, Point2, Point3, Vector3};
 
@@ -11,8 +11,8 @@ pub fn read_pose<'a>(pose_stack: &impl JRef<'a>) -> Affine3<f32> {
 }
 
 pub struct Sprite {
-    uv0: Point2<f32>,
-    uv1: Point2<f32>,
+    pub uv0: Point2<f32>,
+    pub uv1: Point2<f32>,
 }
 
 impl Sprite {
@@ -28,20 +28,12 @@ impl Sprite {
             uv1: point![sprite.get_float_field(mvc.sprite_u1), sprite.get_float_field(mvc.sprite_v1)],
         }
     }
-}
 
-pub struct Sprites {
-    pub sheets_solid: GlobalRef<'static>,
-    pub greg_wire: Sprite,
-}
+    pub fn lerp_u(&self, t: f32) -> f32 { self.uv0.x * (1. - t) + self.uv1.x * t }
+    pub fn lerp_v(&self, t: f32) -> f32 { self.uv0.y * (1. - t) + self.uv1.y * t }
 
-impl Sprites {
-    pub fn new(atlas: &impl JRef<'static>) -> Self {
-        let GlobalObjs { av, cn, mn, .. } = objs();
-        let sheets = av.ldr.with_jni(atlas.jni()).load_class(&av.jv, &cn.sheets.dot).unwrap();
-        let sheets_solid = mn.sheets_solid.get_static_method_id(&sheets).unwrap();
-        let sheets_solid = sheets.call_static_object_method(sheets_solid, &[]).unwrap().unwrap().new_global_ref().unwrap();
-        Self { sheets_solid, greg_wire: Sprite::new(atlas, c"gtceu", c"block/cable/wire") }
+    pub fn sub(&self, u0: f32, v0: f32, u1: f32, v1: f32) -> Self {
+        Self { uv0: point![self.lerp_u(u0), self.lerp_v(v0)], uv1: point![self.lerp_u(u1), self.lerp_v(v1)] }
     }
 }
 
@@ -52,8 +44,8 @@ pub struct DrawContext<'a> {
 }
 
 impl<'a> DrawContext<'a> {
-    pub fn new(sprites: &Sprites, buffer_source: &impl JRef<'a>, light: i32, overlay: i32) -> Self {
-        let sheets = sprites.sheets_solid.raw;
+    pub fn new(lk: &GlobalMtx, buffer_source: &impl JRef<'a>, light: i32, overlay: i32) -> Self {
+        let sheets = lk.sheets_solid.uref().raw;
         let buffer = buffer_source.call_object_method(objs().mv.client.uref().buffer_source_get_buffer, &[sheets]).unwrap().unwrap();
         Self { buffer, light, overlay }
     }

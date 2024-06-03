@@ -1,5 +1,3 @@
-use core::cell::RefCell;
-
 use crate::{
     asm::*,
     cleaner::Cleanable,
@@ -10,15 +8,23 @@ use crate::{
     mapping_base::{Functor, MBOptExt},
     objs,
     registry::{forge_reg, EMITTER_ID},
-    tile_utils::{tile_get_update_packet_impl, TAG_CLIENT},
+    tile_utils::{tile_get_update_packet_impl, TAG_COMMON},
 };
 use alloc::{format, sync::Arc};
 use bstr::BStr;
+use core::{
+    cell::RefCell,
+    f32::consts::{PI, TAU},
+};
 use macros::dyn_abi;
-use nalgebra::{point, vector, Point, Translation3};
+use nalgebra::{point, vector, Affine3, Point, Scale3, Translation3, UnitQuaternion};
 use serde::{Deserialize, Serialize};
+use simba::scalar::SupersetOf;
+
+const RADIUS: f32 = 0.25;
 
 pub struct EmitterBlocks {
+    block_tier: usize,
     tile_cls: GlobalRef<'static>,
     tile_p: usize,
     pub tile_type: GlobalRef<'static>,
@@ -38,15 +44,22 @@ impl EmitterBlocks {
             tile_get_update_packet_impl(jni),
             mn.tile_get_update_tag.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.tile_load.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            mn.tile_save_additional.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+        ];
+        let natives = [
+            mn.tile_get_update_tag.native(get_update_tag_dyn()),
+            mn.tile_load.native(on_load_dyn()),
+            mn.tile_save_additional.native(save_additional_dyn()),
         ];
         cls.class_methods(av).unwrap().collection_extend(&av.jv, methods).unwrap();
         cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
-        cls.register_natives(&[mn.tile_get_update_tag.native(get_update_tag_dyn()), mn.tile_load.native(on_load_dyn())]).unwrap();
+        cls.register_natives(&natives).unwrap();
         let tile_cls = cls.new_global_ref().unwrap();
 
         // Block
         name = namer.next();
         cls = av.new_class_node(jni, &name.slash, &cn.base_tile_block.slash).unwrap();
+        cls.class_fields(av).unwrap().collection_extend(&av.jv, [av.new_field_node(jni, c"0", c"B", 0, 0).unwrap()]).unwrap();
         let methods = [
             mn.tile_block_new_tile.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.block_beh_get_render_shape.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
@@ -62,17 +75,19 @@ impl EmitterBlocks {
         (cls.class_methods(av).unwrap()).collection_extend(&av.jv, methods).unwrap();
         cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
         cls.register_natives(&natives).unwrap();
+        let block_tier = cls.get_field_id(c"0", c"B").unwrap();
         let mut props = mv.block_beh_props.with_jni(jni).call_static_object_method(mv.block_beh_props_of, &[]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_strength, &[f_raw(0.25), f_raw(1E6)]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_dyn_shape, &[]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_sound, &[mv.sound_type_metal.raw]).unwrap().unwrap();
         let n_emitter_tiers = tiers.iter().filter(|x| x.has_emitter).count();
         let mut blocks = cls.new_object_array(n_emitter_tiers as _, 0).unwrap();
-        for (i, tier) in tiers.iter_mut().filter(|x| x.has_emitter).enumerate() {
+        for (block_i, (tier_i, tier)) in tiers.iter_mut().enumerate().filter(|(_, x)| x.has_emitter).enumerate() {
             let true = tier.has_emitter else { continue };
             let block = cls.new_object(mv.base_tile_block_init, &[props.raw]).unwrap();
+            block.set_byte_field(block_tier, tier_i as _);
             tier.emitter_block = Some(block.new_global_ref().unwrap());
-            blocks.set_object_elem(i as _, block.raw).unwrap();
+            blocks.set_object_elem(block_i as _, block.raw).unwrap();
             forge_reg(reg_evt, &format!("{EMITTER_ID}_{}", BStr::new(&*tier.name)), block.raw);
         }
         blocks = blocks.set_of(&av.jv).unwrap();
@@ -93,7 +108,6 @@ impl EmitterBlocks {
         });
 
         // Shapes
-        const RADIUS: f32 = 0.3;
         let center = point![0.5, 0.5, 0.5];
         let shapes = DIR_ATTS.map(|at| {
             let p0 = (center + at * vector![-RADIUS, -RADIUS, -0.5]).coords;
@@ -102,6 +116,7 @@ impl EmitterBlocks {
         });
 
         Self {
+            block_tier,
             tile_p: tile_cls.get_field_id(c"0", c"J").unwrap(),
             tile_cls,
             tile_type: tile_utils.define_tile_type(&blocks, |jni, pos, state| new_tile(jni, 0, pos, state)),
@@ -133,13 +148,117 @@ fn get_render_shape(_: &JNI, _this: usize, _state: usize) -> usize { objs().mv.r
 
 #[dyn_abi]
 fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buffer_source: usize, light: i32, overlay: i32) {
-    let lk = objs().mtx.lock(jni).unwrap();
-    let sprites = lk.sprites.uref();
-    let mut dc = DrawContext::new(sprites, &BorrowedRef::new(jni, &buffer_source), light, overlay);
-    let tf = read_pose(&BorrowedRef::new(jni, &pose_stack));
-    let tf = tf * Translation3::new(0.5, 0.5, 0.5);
-    dc.square(&sprites.greg_wire, &tf)
-    // TODO:
+    let GlobalObjs { mtx, mv, .. } = objs();
+    let tile = BorrowedRef::new(jni, &tile);
+    let state = tile.call_object_method(mv.tile_get_block_state, &[]).unwrap().unwrap();
+    let block = state.call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
+    let lk = mtx.lock(jni).unwrap();
+    let defs = lk.emitter_blocks.uref();
+    let tier = block.get_byte_field(defs.block_tier);
+    let emitter = defs.from_tile(&tile);
+    let common = emitter.common.borrow();
+    let Some(dir) = common.dir else { return };
+    let mut dc = DrawContext::new(&*lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
+    let tf = read_pose(&BorrowedRef::new(jni, &pose_stack)) * Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
+    // Legs
+    const LEG_LEN: f32 = 0.3;
+    const LEG_DIA: f32 = 0.05;
+    const LEG_POS: f32 = RADIUS * 0.6;
+    let greg_wire = lk.greg_wire.uref();
+    let leg_side = greg_wire.sub(0., 0., LEG_DIA, LEG_LEN);
+    let leg_bot = greg_wire.sub(0., 0., LEG_DIA, LEG_DIA);
+    for x in [-LEG_POS, LEG_POS] {
+        let tf = tf * Translation3::new(x, 0., 0.);
+        dc.square(&leg_bot, &(tf * Translation3::new(0., -0.5, 0.) * DIR_ATTS[0] * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_DIA, 1.))));
+        let mut face = Translation3::new(0., LEG_LEN * 0.5 - 0.5, LEG_DIA * 0.5) * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_LEN, 1.));
+        for _ in 0..4 {
+            dc.square(&leg_side, &(tf * face));
+            face = DIR_ATTS[4] * face;
+        }
+    }
+    // Cylinder (r, h, v)
+    const CONTOUR: [(f32, f32, f32); 4] = [(1., 0., 0.), (1., 1., 1.), (0.9, 1., 0.8), (0.6, 0.8, 0.6)];
+    const N_SEGS: usize = 8;
+    let base = vector![RADIUS, libm::tanf(PI / N_SEGS as f32) * RADIUS];
+    let bot_y = LEG_LEN - 0.5;
+    let bot_g = tf * point![0., bot_y, 0.];
+    let top_y = RADIUS;
+    let top_g = tf * point![0., top_y * 0.7, 0.];
+    let mut p0 = CONTOUR.map(|(r, h, _)| {
+        let base = base * r;
+        let y = bot_y * (1. - h) + top_y * h;
+        point![base.x, y, base.y]
+    });
+    let mut g0 = p0.map(|p| tf * p);
+    let rot = UnitQuaternion::from_euler_angles(0., TAU / N_SEGS as f32, 0.);
+    let spr = lk.tiers[tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
+    for _ in 0..N_SEGS / 2 {
+        let p1 = p0.map(|p| rot * p);
+        let p2 = p1.map(|p| rot * p);
+        let g1 = p1.map(|p| tf * p);
+        let g2 = p2.map(|p| tf * p);
+        for i in 0..CONTOUR.len() - 1 {
+            let v0 = spr.lerp_v(CONTOUR[i].2);
+            let v1 = spr.lerp_v(CONTOUR[i + 1].2);
+            let n = (g1[i] - g0[i]).cross(&(g0[i + 1] - g0[i])).normalize();
+            dc.vertex(g0[i], n, spr.uv0.x, v0);
+            dc.vertex(g1[i], n, spr.uv1.x, v0);
+            dc.vertex(g1[i + 1], n, spr.uv1.x, v1);
+            dc.vertex(g0[i + 1], n, spr.uv0.x, v1);
+            let n = (g2[i] - g1[i]).cross(&(g2[i + 1] - g1[i])).normalize();
+            dc.vertex(g1[i], n, spr.uv1.x, v0);
+            dc.vertex(g2[i], n, spr.uv0.x, v0);
+            dc.vertex(g2[i + 1], n, spr.uv0.x, v1);
+            dc.vertex(g1[i + 1], n, spr.uv1.x, v1);
+        }
+        // Bottom Cap
+        let n0 = (g0[0] - bot_g).cross(&(g1[0] - bot_g)).normalize();
+        let n2 = (g1[0] - bot_g).cross(&(g2[0] - bot_g)).normalize();
+        let n1 = (n0 + n2).normalize();
+        let v = spr.lerp_v(CONTOUR[0].2);
+        dc.vertex(bot_g, n1, spr.uv1.x, spr.uv1.y);
+        dc.vertex(g2[0], n2, spr.uv0.x, v);
+        dc.vertex(g1[0], n1, spr.uv1.x, v);
+        dc.vertex(g0[0], n0, spr.uv0.x, v);
+        // Top Cap
+        let n0 = (top_g - g0.last().unwrap()).cross(&(top_g - g1.last().unwrap())).normalize();
+        let n2 = (top_g - g1.last().unwrap()).cross(&(top_g - g2.last().unwrap())).normalize();
+        let n1 = (n0 + n2).normalize();
+        let v = spr.lerp_v(CONTOUR.last().unwrap().2);
+        dc.vertex(top_g, n1, spr.uv1.x, spr.uv1.y);
+        dc.vertex(*g0.last().unwrap(), n0, spr.uv0.x, v);
+        dc.vertex(*g1.last().unwrap(), n1, spr.uv1.x, v);
+        dc.vertex(*g2.last().unwrap(), n2, spr.uv1.x, v);
+        (p0 = p2, g0 = g2);
+    }
+    /*
+    const CYL_LEN: f32 = 0.5 + RADIUS - LEG_LEN;
+    let seg_len = libm::tanf(PI / N_SEGS as f32) * RADIUS * 2.;
+    let mut face = Translation3::new(0., LEG_LEN + CYL_LEN * 0.5 - 0.5, RADIUS) * Affine3::from_subset(&Scale3::new(seg_len, CYL_LEN, 1.));
+    let bot_n = (tf * vector![0., -1., 0.]).normalize();
+    let bot_center = tf * point![0., LEG_LEN - 0.5, 0.];
+    let mut prev_lb = point![0., 0., 0.];
+    for i in 0..N_SEGS {
+        let tf = tf * face;
+        let face_n = (tf * vector![0., 0., 1.]).normalize();
+        let (lb, rb) = (tf * point![-0.5, -0.5, 0.], tf * point![0.5, -0.5, 0.]);
+        let (lt, rt) = (tf * point![-0.5, 0.5, 0.], tf * point![0.5, 0.5, 0.]);
+        // Side
+        dc.vertex(lb, face_n, spr.uv0.x, spr.uv0.y);
+        dc.vertex(rb, face_n, spr.uv1.x, spr.uv0.y);
+        dc.vertex(rt, face_n, spr.uv1.x, spr.uv1.y);
+        dc.vertex(lt, face_n, spr.uv0.x, spr.uv1.y);
+        if (i & 1) == 1 {
+            // Bottom Cap
+            dc.vertex(bot_center, bot_n, spr.lerp_u(0.5), spr.uv1.y);
+            dc.vertex(rb, bot_n, spr.uv1.x, spr.uv0.y);
+            dc.vertex(lb, bot_n, spr.lerp_u(0.5), spr.uv0.y);
+            dc.vertex(prev_lb, bot_n, spr.uv0.x, spr.uv0.y)
+        }
+        face = rot * face;
+        prev_lb = lb
+    }
+    */
 }
 
 #[dyn_abi]
@@ -175,8 +294,23 @@ fn get_update_tag(jni: &JNI, tile: usize) -> usize {
     let data = postcard::to_allocvec(&emitter.common).unwrap();
     let ba = jni.new_byte_array(data.len() as _).unwrap();
     ba.write_byte_array(&data, 0).unwrap();
-    nbt.call_void_method(mv.nbt_compound_put_byte_array, &[jni.new_utf(TAG_CLIENT).unwrap().raw, ba.raw]).unwrap();
+    nbt.call_void_method(mv.nbt_compound_put_byte_array, &[jni.new_utf(TAG_COMMON).unwrap().raw, ba.raw]).unwrap();
     nbt.into_raw()
+}
+
+#[dyn_abi]
+fn save_additional(jni: &JNI, tile: usize, nbt: usize) {
+    let tile = BorrowedRef::new(jni, &tile);
+    let nbt = BorrowedRef::new(jni, &nbt);
+    let GlobalObjs { mv, mtx, .. } = objs();
+    let lk = mtx.lock(jni).unwrap();
+    let defs = lk.emitter_blocks.uref();
+    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[nbt.raw]).unwrap();
+    let emitter = defs.from_tile(&tile);
+    let data = postcard::to_allocvec(&emitter.common).unwrap();
+    let ba = jni.new_byte_array(data.len() as _).unwrap();
+    ba.write_byte_array(&data, 0).unwrap();
+    nbt.call_void_method(mv.nbt_compound_put_byte_array, &[jni.new_utf(TAG_COMMON).unwrap().raw, ba.raw]).unwrap()
 }
 
 #[dyn_abi]
@@ -188,7 +322,7 @@ fn on_load(jni: &JNI, tile: usize, nbt: usize) {
     let nbt = BorrowedRef::new(jni, &nbt);
     tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[nbt.raw]).unwrap();
     let emitter = defs.from_tile(&tile);
-    let blob = nbt.call_object_method(mv.nbt_compound_get_byte_array, &[jni.new_utf(TAG_CLIENT).unwrap().raw]).unwrap().unwrap();
+    let blob = nbt.call_object_method(mv.nbt_compound_get_byte_array, &[jni.new_utf(TAG_COMMON).unwrap().raw]).unwrap().unwrap();
     let data = blob.byte_elems().unwrap();
     if data.len() != 0 {
         Common::deserialize_in_place(&mut postcard::Deserializer::from_bytes(&*data), &mut *emitter.common.borrow_mut()).unwrap()
@@ -198,6 +332,8 @@ fn on_load(jni: &JNI, tile: usize, nbt: usize) {
 #[derive(Default, Serialize, Deserialize)]
 struct Common {
     dir: Option<u8>,
+    polar: f32,
+    azimuth: f32,
 }
 
 struct Emitter {
