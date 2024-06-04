@@ -108,6 +108,7 @@ pub struct CN<T> {
     pub item: T,
     pub item_props: T,
     pub item_stack: T,
+    pub item_like: T,
     pub block_item: T,
     pub tile: T,
     pub tile_supplier: T,
@@ -162,6 +163,7 @@ impl CN<Arc<CSig>> {
             item: b"net.minecraft.world.item.Item",
             item_props: b"net.minecraft.world.item.Item$Properties",
             item_stack: b"net.minecraft.world.item.ItemStack",
+            item_like: b"net.minecraft.world.level.ItemLike",
             block_item: b"net.minecraft.world.item.BlockItem",
             tile: b"net.minecraft.world.level.block.entity.BlockEntity",
             tile_supplier: b"net.minecraft.world.level.block.entity.BlockEntityType$BlockEntitySupplier",
@@ -185,7 +187,7 @@ impl CN<Arc<CSig>> {
             packet: b"net.minecraft.network.protocol.Packet",
             living_entity: b"net.minecraft.world.entity.LivingEntity",
             dir: b"net.minecraft.core.Direction",
-            loot_builder: b"net.minecraft.world.level.storage.loot.Builder",
+            loot_builder: b"net.minecraft.world.level.storage.loot.LootParams$Builder",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -231,6 +233,7 @@ pub struct MN<T> {
     pub sound_type_metal: T,
     pub item_get_desc_id: T,
     pub item_use_on: T,
+    pub item_stack_init: T,
     pub creative_tab_items_gen_accept: T,
     pub render_shape_tile: T,
     pub resource_loc_init: T,
@@ -358,6 +361,11 @@ impl MN<MSig> {
                 name: cs("m_6225_"),
                 sig: msig([cn.use_on_ctx.sig.to_bytes()], cn.interaction_result.sig.to_bytes()),
             },
+            item_stack_init: MSig {
+                owner: cn.item_stack.clone(),
+                name: cs("<init>"),
+                sig: msig([cn.item_like.sig.to_bytes(), b"I", cn.nbt_compound.sig.to_bytes()], b"V"),
+            },
             creative_tab_items_gen_accept: MSig {
                 owner: cn.creative_tab_items_gen.clone(),
                 name: cs("m_257865_"),
@@ -433,6 +441,8 @@ pub struct MV {
     pub sound_type_metal: GlobalRef<'static>,
     pub item: GlobalRef<'static>,
     pub item_get_desc_id: usize,
+    pub item_stack: GlobalRef<'static>,
+    pub item_stack_init: usize,
     pub block_item_use_on: usize,
     pub render_shape_tile: GlobalRef<'static>,
     pub resource_loc: GlobalRef<'static>,
@@ -477,6 +487,7 @@ impl MV {
         let tile = load(&cn.tile);
         let sound_type = load(&cn.sound_type);
         let item = load(&cn.item);
+        let item_stack = load(&cn.item_stack);
         let render_shape = load(&cn.render_shape);
         let resource_loc = load(&cn.resource_loc);
         let shapes = load(&cn.shapes);
@@ -505,6 +516,8 @@ impl MV {
             sound_type_metal: static_field(&sound_type, &mn.sound_type_metal),
             item_get_desc_id: mn.item_get_desc_id.get_method_id(&item).unwrap(),
             item,
+            item_stack_init: mn.item_stack_init.get_method_id(&item_stack).unwrap(),
+            item_stack,
             render_shape_tile: static_field(&render_shape, &mn.render_shape_tile),
             resource_loc_init: mn.resource_loc_init.get_method_id(&resource_loc).unwrap(),
             resource_loc,

@@ -124,8 +124,19 @@ fn patch_greg_creative_tab_items_gen<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<
             while let Some(insn) = node {
                 node = insn.insn_next(av).unwrap();
                 if insn.insn_opcode(av) == OP_INSTANCEOF && &*insn.insn_t_slash(av).unwrap().utf_chars().unwrap() == cn.block_item.slash.as_bytes() {
-                    insns.insert_insns_before(av, insn.raw, [greg_creative_tab_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap()]).unwrap();
-                    insns.remove_insn(av, insn.raw).unwrap()
+                    insns.insert_insns_before(av, insn.raw, [av.new_insn(jni, OP_DUP).unwrap()]).unwrap();
+                    let not_block_item = av.new_label(jni).unwrap();
+                    let end = av.new_label(jni).unwrap();
+                    let stub = [
+                        /* [Item] [IsBlockItem] */ av.new_jump_insn(OP_IFEQ, &not_block_item).unwrap(),
+                        /* [Item] */ greg_creative_tab_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap(),
+                        /* [IsNotEmitter] */ av.new_jump_insn(OP_GOTO, &end).unwrap(),
+                        not_block_item,
+                        /* [Item] */ av.new_insn(jni, OP_POP).unwrap(),
+                        /* (empty) */ av.new_ldc_insn(jni, av.jv.wrap_bool(jni, false).unwrap().raw).unwrap(),
+                        /* [IsBlockItem && IsNotEmitter] */ end,
+                    ];
+                    insns.insert_insns_after(av, insn.raw, stub).unwrap()
                 }
             }
             found = true;

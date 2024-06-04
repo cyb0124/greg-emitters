@@ -66,12 +66,14 @@ impl EmitterBlocks {
             mn.block_beh_get_render_shape.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.block_beh_get_shape.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.block_set_placed_by.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            mn.block_beh_get_drops.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
         ];
         let natives = [
             mn.tile_block_new_tile.native(new_tile_dyn()),
             mn.block_beh_get_render_shape.native(get_render_shape_dyn()),
             mn.block_beh_get_shape.native(get_shape_dyn()),
             mn.block_set_placed_by.native(set_placed_by_dyn()),
+            mn.block_beh_get_drops.native(get_drops_dyn()),
         ];
         (cls.class_methods(av).unwrap()).collection_extend(&av.jv, methods).unwrap();
         cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
@@ -128,6 +130,17 @@ impl EmitterBlocks {
     }
 
     fn from_tile<'a>(&self, tile: &impl JRef<'a>) -> &'a Emitter { unsafe { &*(tile.get_long_field(self.tile_p) as *const Emitter) } }
+}
+
+#[dyn_abi]
+fn get_drops(jni: &JNI, this: usize, _state: usize, _loot_builder: usize) -> usize {
+    let GlobalObjs { mtx, av, mv, .. } = objs();
+    let lk = mtx.lock(jni).unwrap();
+    let defs = lk.emitter_blocks.get().unwrap();
+    let tier = BorrowedRef::new(jni, &this).get_byte_field(defs.block_tier);
+    let item = lk.tiers[tier as usize].emitter_item.get().unwrap();
+    let stack = mv.item_stack.with_jni(jni).new_object(mv.item_stack_init, &[item.raw, 1, 0]).unwrap();
+    mv.item_stack.with_jni(jni).new_object_array(1, stack.raw).unwrap().array_as_list(&av.jv).unwrap().into_raw()
 }
 
 #[dyn_abi]

@@ -158,7 +158,6 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
 
 #[dyn_abi]
 fn greg_creative_tab_stub(jni: &'static JNI, _: usize, item: usize) -> bool {
-    let GlobalObjs { mv, mtx, .. } = objs();
-    let item = BorrowedRef::new(jni, &item);
-    item.is_instance_of(mv.block_item.raw) && !item.is_instance_of(mtx.lock(jni).unwrap().emitter_items.get().unwrap().item.raw)
+    // Return if item should be hidden from creative tab (conjunctive with other conditions)
+    !BorrowedRef::new(jni, &item).is_instance_of(objs().mtx.lock(jni).unwrap().emitter_items.get().unwrap().item.raw)
 }
