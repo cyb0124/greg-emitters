@@ -131,6 +131,7 @@ pub struct CN<T> {
     pub packet: T,
     pub living_entity: T,
     pub dir: T,
+    pub loot_builder: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -184,6 +185,7 @@ impl CN<Arc<CSig>> {
             packet: b"net.minecraft.network.protocol.Packet",
             living_entity: b"net.minecraft.world.entity.LivingEntity",
             dir: b"net.minecraft.core.Direction",
+            loot_builder: b"net.minecraft.world.level.storage.loot.Builder",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -214,6 +216,7 @@ pub struct MN<T> {
     pub block_beh_props_sound: T,
     pub block_beh_get_render_shape: T,
     pub block_beh_get_shape: T,
+    pub block_beh_get_drops: T,
     pub block_item_init: T,
     pub block_getter_get_tile: T,
     pub block_state_get_block: T,
@@ -311,6 +314,11 @@ impl MN<MSig> {
                     [cn.block_state.sig.to_bytes(), cn.block_getter.sig.to_bytes(), cn.block_pos.sig.to_bytes(), cn.collision_ctx.sig.to_bytes()],
                     cn.voxel_shape.sig.to_bytes(),
                 ),
+            },
+            block_beh_get_drops: MSig {
+                owner: cn.block_beh.clone(),
+                name: cs("m_49635_"),
+                sig: msig([cn.block_state.sig.to_bytes(), cn.loot_builder.sig.to_bytes()], b"Ljava/util/List;"),
             },
             block_item_init: MSig {
                 owner: cn.block_item.clone(),

@@ -50,12 +50,15 @@ fn get_desc_id(jni: &JNI, this: usize) -> usize {
 }
 
 #[dyn_abi]
-fn make_item(jni: &JNI, this: usize, props: usize) -> usize {
-    let lk = objs().mtx.lock(jni).unwrap();
-    let defs = lk.emitter_items.uref();
+fn make_item(jni: &'static JNI, this: usize, props: usize) -> usize {
+    let mut lk = objs().mtx.lock(jni).unwrap();
+    let lk = &mut *lk;
+    let defs = lk.emitter_items.get().unwrap();
     let tier = BorrowedRef::new(jni, &this).get_byte_field(defs.item_maker_tier);
-    let block = lk.tiers[tier as usize].emitter_block.uref();
-    defs.item.with_jni(jni).new_object(objs().mv.block_item_init, &[block.raw, props]).unwrap().into_raw()
+    let tier = &mut lk.tiers[tier as usize];
+    let item = defs.item.with_jni(jni).new_object(objs().mv.block_item_init, &[tier.emitter_block.get().unwrap().raw, props]).unwrap();
+    tier.emitter_item.set(item.new_global_ref().unwrap()).ok().unwrap();
+    item.into_raw()
 }
 
 #[dyn_abi]
@@ -63,6 +66,6 @@ fn item_use_on(jni: &'static JNI, this: usize, ctx: usize) -> usize {
     let GlobalObjs { mtx, mv, .. } = objs();
     let mut lk = mtx.lock(jni).unwrap();
     let saved = BorrowedRef::new(jni, &ctx).new_global_ref().unwrap();
-    lk.emitter_items.as_mut().unwrap().use_on_ctx.replace(saved).map(|x| x.replace_jni(jni));
+    lk.emitter_items.get_mut().unwrap().use_on_ctx.replace(saved).map(|x| x.replace_jni(jni));
     BorrowedRef::new(jni, &this).call_nonvirtual_object_method(mv.block_item.raw, mv.block_item_use_on, &[ctx]).unwrap().unwrap().into_raw()
 }

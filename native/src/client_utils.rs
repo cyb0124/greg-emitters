@@ -44,7 +44,7 @@ pub struct DrawContext<'a> {
 
 impl<'a> DrawContext<'a> {
     pub fn new(lk: &GlobalMtx, buffer_source: &impl JRef<'a>, light: i32, overlay: i32) -> Self {
-        let sheets = lk.sheets_solid.uref().raw;
+        let sheets = lk.sheets_solid.get().unwrap().raw;
         let buffer = buffer_source.call_object_method(objs().mv.client.uref().buffer_source_get_buffer, &[sheets]).unwrap().unwrap();
         Self { buffer, light, overlay }
     }

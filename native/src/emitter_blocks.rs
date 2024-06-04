@@ -87,7 +87,7 @@ impl EmitterBlocks {
             let true = tier.has_emitter else { continue };
             let block = cls.new_object(mv.base_tile_block_init, &[props.raw]).unwrap();
             block.set_byte_field(block_tier, tier_i as _);
-            tier.emitter_block = Some(block.new_global_ref().unwrap());
+            tier.emitter_block.set(block.new_global_ref().unwrap()).ok().unwrap();
             blocks.set_object_elem(block_i as _, block.raw).unwrap();
             forge_reg(reg_evt, &format!("{EMITTER_ID}_{}", BStr::new(&*tier.name)), block.raw);
         }
@@ -134,7 +134,7 @@ impl EmitterBlocks {
 fn get_shape(jni: &JNI, _this: usize, _state: usize, level: usize, pos: usize, _collision_ctx: usize) -> usize {
     let GlobalObjs { mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.uref();
+    let defs = lk.emitter_blocks.get().unwrap();
     // Rethrow is needed for lithium's SingleBlockBlockView.
     match BorrowedRef::new(jni, &level).call_object_method(mv.block_getter_get_tile, &[pos]) {
         Ok(Some(tile)) => defs.from_tile(&tile).common.borrow().dir.map_or(defs.shape_fallback.raw, |i| defs.shapes[i as usize].raw),
@@ -154,7 +154,7 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
     let state = tile.call_object_method(mv.tile_get_block_state, &[]).unwrap().unwrap();
     let block = state.call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.uref();
+    let defs = lk.emitter_blocks.get().unwrap();
     let tier = block.get_byte_field(defs.block_tier);
     let emitter = defs.from_tile(&tile);
     let common = emitter.common.borrow();
@@ -165,7 +165,7 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
     const LEG_LEN: f32 = 0.3;
     const LEG_DIA: f32 = 0.05;
     const LEG_POS: f32 = RADIUS * 0.6;
-    let greg_wire = lk.greg_wire.uref();
+    let greg_wire = lk.wire_sprite.uref();
     let leg_side = greg_wire.sub(0., 0., LEG_DIA, LEG_LEN);
     let leg_bot = greg_wire.sub(0., 0., LEG_DIA, LEG_DIA);
     for x in [-LEG_POS, LEG_POS] {
@@ -231,7 +231,7 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
 fn new_tile(jni: &JNI, _this: usize, pos: usize, state: usize) -> usize {
     let GlobalObjs { mv, mtx, cleaner, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.uref();
+    let defs = lk.emitter_blocks.get().unwrap();
     let tile = defs.tile_cls.with_jni(jni).new_object(mv.tile_init, &[defs.tile_type.raw, pos, state]).unwrap();
     let emitter = Arc::new(Emitter { common: <_>::default() });
     tile.set_long_field(defs.tile_p, &*emitter as *const _ as _);
@@ -243,18 +243,18 @@ fn new_tile(jni: &JNI, _this: usize, pos: usize, state: usize) -> usize {
 fn set_placed_by(jni: &JNI, _this: usize, level: usize, pos: usize, _state: usize, _placer: usize, _item_stack: usize) {
     let GlobalObjs { mv, mtx, .. } = objs();
     let mut lk = mtx.lock(jni).unwrap();
-    let use_on_ctx = lk.emitter_items.as_mut().unwrap().use_on_ctx.take().unwrap().replace_jni(jni);
+    let use_on_ctx = lk.emitter_items.get_mut().unwrap().use_on_ctx.take().unwrap().replace_jni(jni);
     let dir = use_on_ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap();
     let dir = dir.call_int_method(mv.dir_get_3d_value, &[]).unwrap() as u8;
     let tile = BorrowedRef::new(jni, &level).call_object_method(mv.block_getter_get_tile, &[pos]).unwrap().unwrap();
-    lk.emitter_blocks.uref().from_tile(&tile).common.borrow_mut().dir = Some(dir)
+    lk.emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir)
 }
 
 #[dyn_abi]
 fn get_update_tag(jni: &JNI, tile: usize) -> usize {
     let GlobalObjs { mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.uref();
+    let defs = lk.emitter_blocks.get().unwrap();
     let nbt = mv.nbt_compound.with_jni(jni).new_object(mv.nbt_compound_init, &[]).unwrap();
     let emitter = defs.from_tile(&BorrowedRef::new(jni, &tile));
     let data = postcard::to_allocvec(&emitter.common).unwrap();
@@ -270,7 +270,7 @@ fn save_additional(jni: &JNI, tile: usize, nbt: usize) {
     let nbt = BorrowedRef::new(jni, &nbt);
     let GlobalObjs { mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.uref();
+    let defs = lk.emitter_blocks.get().unwrap();
     tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[nbt.raw]).unwrap();
     let emitter = defs.from_tile(&tile);
     let data = postcard::to_allocvec(&emitter.common).unwrap();
@@ -283,7 +283,7 @@ fn save_additional(jni: &JNI, tile: usize, nbt: usize) {
 fn on_load(jni: &JNI, tile: usize, nbt: usize) {
     let GlobalObjs { mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.uref();
+    let defs = lk.emitter_blocks.get().unwrap();
     let tile = BorrowedRef::new(jni, &tile);
     let nbt = BorrowedRef::new(jni, &nbt);
     tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[nbt.raw]).unwrap();

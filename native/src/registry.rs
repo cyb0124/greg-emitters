@@ -47,9 +47,9 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
     let key = evt.call_object_method(fg.reg_evt_key, &[]).unwrap().unwrap();
     if key.equals(&av.jv, fg.key_blocks.raw).unwrap() {
-        lk.emitter_blocks.get_or_insert_with(|| EmitterBlocks::init(jni, &mut lk.tiers, &evt));
+        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &mut lk.tiers, &evt));
     } else if key.equals(&av.jv, fg.key_tile_types.raw).unwrap() {
-        forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.uref().tile_type.raw)
+        forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
     }
 }
 
@@ -58,7 +58,7 @@ fn on_forge_renderers(jni: &JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
     let fgc = objs().fg.client.uref();
     let lk = objs().mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.uref();
+    let defs = lk.emitter_blocks.get().unwrap();
     evt.call_void_method(fgc.renderers_evt_reg, &[defs.tile_type.raw, defs.renderer_provider.uref().raw]).unwrap()
 }
 
@@ -72,12 +72,12 @@ fn on_forge_atlas(jni: &'static JNI, _: usize, evt: usize) {
     let loc = atlas.call_object_method(mvc.atlas_loc, &[]).unwrap().unwrap();
     if loc.equals(&av.jv, mvc.atlas_loc_blocks.raw).unwrap() {
         let mut lk = mtx.lock(jni).unwrap();
-        lk.sheets_solid.get_or_insert_with(|| {
+        lk.sheets_solid.get_or_init(|| {
             let sheets = av.ldr.with_jni(atlas.jni()).load_class(&av.jv, &cn.sheets.dot).unwrap();
             let sheets_solid = mn.sheets_solid.get_static_method_id(&sheets).unwrap();
             sheets.call_static_object_method(sheets_solid, &[]).unwrap().unwrap().new_global_ref().unwrap()
         });
-        lk.greg_wire = Some(Sprite::new(&atlas, c"gtceu", c"block/cable/wire"));
+        lk.wire_sprite = Some(Sprite::new(&atlas, c"gtceu", c"block/cable/wire"));
         for tier in &mut lk.tiers {
             let name = cs(Vec::from_iter([b"item/", &*tier.name, b"_emitter"].into_iter().flatten().copied()));
             tier.emitter_sprite = Some(Sprite::new(&atlas, c"gtceu", &name))

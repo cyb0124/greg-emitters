@@ -13,7 +13,10 @@ use crate::{
     tile_utils::TileUtils,
 };
 use alloc::{boxed::Box, format, sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    cell::OnceCell,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use hashbrown::HashMap;
 use macros::dyn_abi;
 
@@ -39,16 +42,17 @@ pub struct Tier {
     pub name: Box<[u8]>,
     pub has_emitter: bool,
     pub emitter_sprite: Option<Sprite>,
-    pub emitter_block: Option<GlobalRef<'static>>,
+    pub emitter_block: OnceCell<GlobalRef<'static>>,
+    pub emitter_item: OnceCell<GlobalRef<'static>>,
 }
 
 #[derive(Default)]
 pub struct GlobalMtx {
-    pub gmv: Option<GregMV>,
-    pub sheets_solid: Option<GlobalRef<'static>>,
-    pub greg_wire: Option<Sprite>,
-    pub emitter_items: Option<EmitterItems>,
-    pub emitter_blocks: Option<EmitterBlocks>,
+    pub gmv: OnceCell<GregMV>,
+    pub sheets_solid: OnceCell<GlobalRef<'static>>,
+    pub wire_sprite: Option<Sprite>,
+    pub emitter_items: OnceCell<EmitterItems>,
+    pub emitter_blocks: OnceCell<EmitterBlocks>,
     pub tier_lookup: HashMap<Box<[u8]>, u8>,
     pub tiers: Vec<Tier>,
 }
@@ -127,26 +131,34 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
     let true = name.ends_with(suffix) else { return 0 };
     let name: Box<[u8]> = name[..name.len() - suffix.len()].into();
     let mut lk = objs().mtx.lock(jni).unwrap();
-    if lk.gmv.is_none() {
+    let lk = &mut *lk;
+    lk.gmv.get_or_init(|| {
         let gmv = GregMV::new(jni);
         let tier_volts = gmv.tier_volts.long_elems().unwrap();
         lk.tiers.reserve_exact(tier_volts.len());
         for (tier, &volt) in tier_volts.iter().enumerate() {
             let name: Box<[u8]> = gmv.tier_names.get_object_elem(tier as _).unwrap().unwrap().utf_chars().unwrap().to_ascii_lowercase().into();
             lk.tier_lookup.insert(name.clone(), tier as _);
-            lk.tiers.push(Tier { volt, name, has_emitter: false, emitter_sprite: None, emitter_block: None })
+            lk.tiers.push(Tier {
+                volt,
+                name,
+                has_emitter: false,
+                emitter_sprite: None,
+                emitter_block: OnceCell::new(),
+                emitter_item: OnceCell::new(),
+            })
         }
         drop(tier_volts);
-        lk.gmv = Some(gmv)
-    }
+        gmv
+    });
     let &tier = lk.tier_lookup.get(&name).unwrap();
     lk.tiers[tier as usize].has_emitter = true;
-    lk.emitter_items.get_or_insert_with(|| EmitterItems::new(jni)).make_item_maker(jni, tier).into_raw()
+    lk.emitter_items.get_or_init(|| EmitterItems::new(jni)).make_item_maker(jni, tier).into_raw()
 }
 
 #[dyn_abi]
 fn greg_creative_tab_stub(jni: &'static JNI, _: usize, item: usize) -> bool {
     let GlobalObjs { mv, mtx, .. } = objs();
     let item = BorrowedRef::new(jni, &item);
-    item.is_instance_of(mv.block_item.raw) && !item.is_instance_of(mtx.lock(jni).unwrap().emitter_items.uref().item.raw)
+    item.is_instance_of(mv.block_item.raw) && !item.is_instance_of(mtx.lock(jni).unwrap().emitter_items.get().unwrap().item.raw)
 }
