@@ -5,13 +5,13 @@ use crate::{
     geometry::{lerp, new_voxel_shape, DIR_ATTS},
     global::{GlobalObjs, Tier},
     jvm::*,
+    mapping::GregMV,
     mapping_base::{Functor, MBOptExt},
     objs,
     registry::{forge_reg, EMITTER_ID},
     tile_utils::{tile_get_update_packet_impl, TAG_COMMON},
 };
 use alloc::{format, sync::Arc};
-use bstr::BStr;
 use core::{
     array,
     cell::RefCell,
@@ -35,7 +35,7 @@ pub struct EmitterBlocks {
 }
 
 impl EmitterBlocks {
-    pub fn init(jni: &'static JNI, tiers: &mut [Tier], reg_evt: &impl JRef<'static>) -> Self {
+    pub fn init(jni: &'static JNI, tiers: &mut [Tier], gmv: &GregMV, reg_evt: &impl JRef<'static>) -> Self {
         // Tile
         let GlobalObjs { av, cn, mn, mv, namer, tile_utils, .. } = objs();
         let mut name = namer.next();
@@ -88,10 +88,10 @@ impl EmitterBlocks {
         for (block_i, (tier_i, tier)) in tiers.iter_mut().enumerate().filter(|(_, x)| x.has_emitter).enumerate() {
             let true = tier.has_emitter else { continue };
             let block = cls.new_object(mv.base_tile_block_init, &[props.raw]).unwrap();
+            blocks.set_object_elem(block_i as _, block.raw).unwrap();
             block.set_byte_field(block_tier, tier_i as _);
             tier.emitter_block.set(block.new_global_ref().unwrap()).ok().unwrap();
-            blocks.set_object_elem(block_i as _, block.raw).unwrap();
-            forge_reg(reg_evt, &format!("{EMITTER_ID}_{}", BStr::new(&*tier.name)), block.raw);
+            forge_reg(reg_evt, &format!("{EMITTER_ID}_{}", tier.name), block.raw);
         }
         blocks = blocks.set_of(&av.jv).unwrap();
 

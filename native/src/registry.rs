@@ -1,4 +1,4 @@
-use crate::{asm::*, client_utils::Sprite, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping_base::*, objs, ti};
+use crate::{asm::*, client_utils::Sprite, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping::GregMV, mapping_base::*, objs, ti};
 use alloc::{format, vec::Vec};
 use core::ffi::{c_char, CStr};
 use macros::dyn_abi;
@@ -32,6 +32,20 @@ pub fn add_forge_listener(bus: &GlobalRef<'static>, evt_sig: &[u8], func: usize)
     bus.call_void_method(fg.evt_bus_add_listener, &[cls.alloc_object().unwrap().raw]).unwrap()
 }
 
+pub fn make_resource_loc<'a>(jni: &'a JNI, ns: &CStr, id: &CStr) -> LocalRef<'a> {
+    let mv = &objs().mv;
+    let (ns, id) = (jni.new_utf(ns).unwrap(), jni.new_utf(id).unwrap());
+    mv.resource_loc.with_jni(jni).new_object(mv.resource_loc_init, &[ns.raw, id.raw]).unwrap()
+}
+
+pub fn add_greg_dyn_resource(jni: &JNI, gmv: &GregMV, id: impl Into<Vec<u8>>, json: &str) {
+    let data = gmv.dyn_resource_pack_data.with_jni(jni);
+    let key = make_resource_loc(jni, &cs(MOD_ID), &cs(id));
+    let ba = jni.new_byte_array(json.len() as _).unwrap();
+    ba.crit_elems().unwrap().copy_from_slice(json.as_bytes());
+    data.map_put(&objs().av.jv, key.raw, ba.raw).unwrap();
+}
+
 pub fn forge_reg<'a>(evt: &impl JRef<'a>, id: &str, value: usize) {
     let fg = &objs().fg;
     let reg = evt.call_object_method(fg.reg_evt_fg_reg, &[]).unwrap().unwrap();
@@ -47,7 +61,7 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
     let key = evt.call_object_method(fg.reg_evt_key, &[]).unwrap().unwrap();
     if key.equals(&av.jv, fg.key_blocks.raw).unwrap() {
-        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &mut lk.tiers, &evt));
+        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &mut lk.tiers, lk.gmv.get().unwrap(), &evt));
     } else if key.equals(&av.jv, fg.key_tile_types.raw).unwrap() {
         forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
     }
@@ -79,14 +93,13 @@ fn on_forge_atlas(jni: &'static JNI, _: usize, evt: usize) {
         });
         lk.wire_sprite = Some(Sprite::new(&atlas, c"gtceu", c"block/cable/wire"));
         for tier in &mut lk.tiers {
-            let name = cs(Vec::from_iter([b"item/", &*tier.name, b"_emitter"].into_iter().flatten().copied()));
-            tier.emitter_sprite = Some(Sprite::new(&atlas, c"gtceu", &name))
+            tier.emitter_sprite = Some(Sprite::new(&atlas, c"gtceu", &cs(format!("item/{}_emitter", tier.name))))
         }
     }
 }
 
 fn patch_greg_reg<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
-    let GlobalObjs { av, gmn, greg_reg_item_stub: reg_item_stub, .. } = objs();
+    let GlobalObjs { av, gmn, greg_reg_item_stub, .. } = objs();
     let cls = av.read_class(jni, data).unwrap();
     let mut found = false;
     for method in cls.class_methods_iter(av).unwrap() {
@@ -95,7 +108,7 @@ fn patch_greg_reg<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
             let skip = av.new_label(jni).unwrap();
             let stub = [
                 av.new_var_insn(jni, OP_ALOAD, 1).unwrap(),
-                reg_item_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap(),
+                greg_reg_item_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap(),
                 av.new_insn(jni, OP_DUP).unwrap(),
                 av.new_jump_insn(OP_IFNULL, &skip).unwrap(),
                 av.new_insn(jni, OP_DUP).unwrap(),
@@ -147,6 +160,22 @@ fn patch_greg_creative_tab_items_gen<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<
     cls
 }
 
+fn patch_greg_material_block_renderer<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
+    let GlobalObjs { av, greg_reinit_models_stub, .. } = objs();
+    let cls = av.read_class(jni, data).unwrap();
+    let mut found = false;
+    for method in cls.class_methods_iter(av).unwrap() {
+        let method = method.unwrap().expect_some().unwrap();
+        if &*method.method_name(av).unwrap().utf_chars().unwrap() == b"reinitModels" {
+            method.method_insns(av).unwrap().prepend_insns(av, [greg_reinit_models_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap()]).unwrap();
+            found = true;
+            break;
+        }
+    }
+    assert!(found);
+    cls
+}
+
 #[dyn_abi]
 fn class_file_load_hook(
     ti: &JVMTI,
@@ -168,6 +197,8 @@ fn class_file_load_hook(
         patch_greg_reg(jni, data)
     } else if slash == &*gcn.creative_tab_items_gen.slash {
         patch_greg_creative_tab_items_gen(jni, data)
+    } else if slash == &*gcn.material_block_renderer.slash {
+        patch_greg_material_block_renderer(jni, data)
     } else {
         return;
     };

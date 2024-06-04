@@ -1,4 +1,4 @@
-use crate::{geometry::lerp, global::GlobalMtx, jvm::*, mapping_base::*, objs};
+use crate::{geometry::lerp, global::GlobalMtx, jvm::*, mapping_base::*, objs, registry::make_resource_loc};
 use core::{ffi::CStr, mem::MaybeUninit};
 use nalgebra::{point, vector, Affine3, ArrayStorage, Matrix4, Point2, Point3, Vector3};
 
@@ -17,11 +17,8 @@ pub struct Sprite {
 
 impl Sprite {
     pub fn new<'a>(atlas: &impl JRef<'a>, ns: &CStr, id: &CStr) -> Self {
-        let jni = atlas.jni();
-        let mv = &objs().mv;
-        let mvc = mv.client.uref();
-        let (ns, id) = (jni.new_utf(ns).unwrap(), jni.new_utf(id).unwrap());
-        let loc = mv.resource_loc.with_jni(jni).new_object(mv.resource_loc_init, &[ns.raw, id.raw]).unwrap();
+        let mvc = &objs().mv.client.uref();
+        let loc = make_resource_loc(atlas.jni(), ns, id);
         let sprite = atlas.call_object_method(mvc.atlas_get_sprite, &[loc.raw]).unwrap().unwrap();
         Self {
             uv0: point![sprite.get_float_field(mvc.sprite_u0), sprite.get_float_field(mvc.sprite_v0)],

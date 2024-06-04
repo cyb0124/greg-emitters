@@ -563,6 +563,8 @@ pub struct GregCN<T> {
     pub non_null_fn: T,
     pub creative_tab_items_gen: T,
     pub values: T,
+    pub dyn_resource_pack: T,
+    pub material_block_renderer: T,
 }
 
 impl GregCN<Arc<CSig>> {
@@ -573,6 +575,8 @@ impl GregCN<Arc<CSig>> {
             non_null_fn: b"com.tterrag.registrate.util.nullness.NonNullFunction",
             creative_tab_items_gen: b"com.gregtechceu.gtceu.common.data.GTCreativeModeTabs$RegistrateDisplayItemsGenerator",
             values: b"com.gregtechceu.gtceu.api.GTValues",
+            dyn_resource_pack: b"com.gregtechceu.gtceu.data.pack.GTDynamicResourcePack",
+            material_block_renderer: b"com.gregtechceu.gtceu.client.renderer.block.MaterialBlockRenderer",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -597,18 +601,21 @@ impl GregMN {
 pub struct GregMV {
     pub tier_names: GlobalRef<'static>,
     pub tier_volts: GlobalRef<'static>,
+    pub dyn_resource_pack_data: GlobalRef<'static>,
 }
 
 impl GregMV {
     pub fn new(jni: &'static JNI) -> Self {
         let GlobalObjs { av, gcn, .. } = objs();
         let load = |csig: &Arc<CSig>| av.ldr.with_jni(jni).load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
+        let static_field = |cv: &GlobalRef<'static>, name, sig| {
+            cv.get_static_object_field(cv.get_static_field_id(name, sig).unwrap()).unwrap().new_global_ref().unwrap()
+        };
         let values = load(&gcn.values);
-        let tier_names = values.get_static_field_id(c"VN", c"[Ljava/lang/String;").unwrap();
-        let tier_volts = values.get_static_field_id(c"V", c"[J").unwrap();
         Self {
-            tier_names: values.get_static_object_field(tier_names).unwrap().new_global_ref().unwrap(),
-            tier_volts: values.get_static_object_field(tier_volts).unwrap().new_global_ref().unwrap(),
+            tier_names: static_field(&values, c"VN", c"[Ljava/lang/String;"),
+            tier_volts: static_field(&values, c"V", c"[J"),
+            dyn_resource_pack_data: static_field(&load(&gcn.dyn_resource_pack), c"DATA", c"Ljava/util/concurrent/ConcurrentMap;"),
         }
     }
 }
