@@ -5,11 +5,10 @@ use crate::{
     geometry::{lerp, new_voxel_shape, DIR_ATTS},
     global::{GlobalObjs, Tier},
     jvm::*,
-    mapping::GregMV,
-    mapping_base::{Functor, MBOptExt},
+    mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
-    tile_utils::{tile_get_update_packet_impl, TAG_COMMON},
+    tile_utils::{tile_get_update_packet_impl, write_tag, TAG_COMMON},
 };
 use alloc::{format, sync::Arc};
 use core::{
@@ -35,7 +34,7 @@ pub struct EmitterBlocks {
 }
 
 impl EmitterBlocks {
-    pub fn init(jni: &'static JNI, tiers: &mut [Tier], gmv: &GregMV, reg_evt: &impl JRef<'static>) -> Self {
+    pub fn init(jni: &'static JNI, tiers: &mut [Tier], reg_evt: &impl JRef<'static>) -> Self {
         // Tile
         let GlobalObjs { av, cn, mn, mv, namer, tile_utils, .. } = objs();
         let mut name = namer.next();
@@ -267,34 +266,26 @@ fn set_placed_by(jni: &JNI, _this: usize, level: usize, pos: usize, _state: usiz
 fn get_update_tag(jni: &JNI, tile: usize) -> usize {
     let GlobalObjs { mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.get().unwrap();
-    let nbt = mv.nbt_compound.with_jni(jni).new_object(mv.nbt_compound_init, &[]).unwrap();
-    let emitter = defs.from_tile(&BorrowedRef::new(jni, &tile));
-    let data = postcard::to_allocvec(&emitter.common).unwrap();
-    let ba = jni.new_byte_array(data.len() as _).unwrap();
-    ba.write_byte_array(&data, 0).unwrap();
-    nbt.call_void_method(mv.nbt_compound_put_byte_array, &[jni.new_utf(TAG_COMMON).unwrap().raw, ba.raw]).unwrap();
-    nbt.into_raw()
+    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &tile));
+    let tag = mv.nbt_compound.with_jni(jni).new_object(mv.nbt_compound_init, &[]).unwrap();
+    write_tag(&tag, TAG_COMMON, &emitter.common);
+    tag.into_raw()
 }
 
 #[dyn_abi]
 fn save_additional(jni: &JNI, tile: usize, nbt: usize) {
     let tile = BorrowedRef::new(jni, &tile);
-    let nbt = BorrowedRef::new(jni, &nbt);
+    let tag = BorrowedRef::new(jni, &nbt);
     let GlobalObjs { mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.get().unwrap();
-    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[nbt.raw]).unwrap();
-    let emitter = defs.from_tile(&tile);
-    let data = postcard::to_allocvec(&emitter.common).unwrap();
-    let ba = jni.new_byte_array(data.len() as _).unwrap();
-    ba.write_byte_array(&data, 0).unwrap();
-    nbt.call_void_method(mv.nbt_compound_put_byte_array, &[jni.new_utf(TAG_COMMON).unwrap().raw, ba.raw]).unwrap()
+    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&tile);
+    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[tag.raw]).unwrap();
+    write_tag(&tag, TAG_COMMON, &emitter.common)
 }
 
 #[dyn_abi]
 fn on_load(jni: &JNI, tile: usize, nbt: usize) {
-    let GlobalObjs { mv, mtx, .. } = objs();
+    let GlobalObjs { av, mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let defs = lk.emitter_blocks.get().unwrap();
     let tile = BorrowedRef::new(jni, &tile);
@@ -304,7 +295,9 @@ fn on_load(jni: &JNI, tile: usize, nbt: usize) {
     let blob = nbt.call_object_method(mv.nbt_compound_get_byte_array, &[jni.new_utf(TAG_COMMON).unwrap().raw]).unwrap().unwrap();
     let data = blob.byte_elems().unwrap();
     if data.len() != 0 {
-        Common::deserialize_in_place(&mut postcard::Deserializer::from_bytes(&*data), &mut *emitter.common.borrow_mut()).unwrap()
+        if let Err(e) = Common::deserialize_in_place(&mut postcard::Deserializer::from_bytes(&*data), &mut *emitter.common.borrow_mut()) {
+            return av.jv.runtime_exception.with_jni(jni).throw_new(&cs(format!("{e}"))).unwrap();
+        }
     }
 }
 

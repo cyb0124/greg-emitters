@@ -9,9 +9,18 @@ use crate::{
 use alloc::sync::Arc;
 use core::{ffi::CStr, mem::transmute};
 use macros::dyn_abi;
+use serde::Serialize;
 
 pub const TAG_SERVER: &CStr = c"s";
 pub const TAG_COMMON: &CStr = c"c";
+
+pub fn write_tag<'a>(tag: &impl JRef<'a>, key: &CStr, value: &impl Serialize) {
+    let data = postcard::to_allocvec(value).unwrap();
+    let ba = tag.jni().new_byte_array(data.len() as _).unwrap();
+    ba.write_byte_array(&data, 0).unwrap();
+    tag.call_void_method(objs().mv.nbt_compound_put_byte_array, &[ba.jni.new_utf(key).unwrap().raw, ba.raw]).unwrap()
+}
+
 pub type TileMakerFn = fn(&'static JNI, pos: usize, state: usize) -> usize;
 pub struct TileUtils {
     supplier_cls: GlobalRef<'static>,

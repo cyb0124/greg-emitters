@@ -42,7 +42,7 @@ pub fn add_greg_dyn_resource(jni: &JNI, gmv: &GregMV, id: impl Into<Vec<u8>>, js
     let data = gmv.dyn_resource_pack_data.with_jni(jni);
     let key = make_resource_loc(jni, &cs(MOD_ID), &cs(id));
     let ba = jni.new_byte_array(json.len() as _).unwrap();
-    ba.crit_elems().unwrap().copy_from_slice(json.as_bytes());
+    ba.write_byte_array(json.as_bytes(), 0).unwrap();
     data.map_put(&objs().av.jv, key.raw, ba.raw).unwrap();
 }
 
@@ -61,7 +61,7 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
     let key = evt.call_object_method(fg.reg_evt_key, &[]).unwrap().unwrap();
     if key.equals(&av.jv, fg.key_blocks.raw).unwrap() {
-        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &mut lk.tiers, lk.gmv.get().unwrap(), &evt));
+        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &mut lk.tiers, &evt));
     } else if key.equals(&av.jv, fg.key_tile_types.raw).unwrap() {
         forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
     }
