@@ -5,7 +5,7 @@ use crate::{
     emitter_blocks::EmitterBlocks,
     emitter_items::EmitterItems,
     jvm::*,
-    mapping::{Forge, GregCN, GregMN, GregMV, CN, MN, MV},
+    mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
     mapping_base::*,
     objs,
     registry::{add_greg_dyn_resource, EMITTER_ID, MOD_ID},
@@ -23,12 +23,14 @@ use macros::dyn_abi;
 
 pub struct GlobalObjs {
     pub av: AV<'static>,
-    pub fg: Forge,
     pub cn: CN<Arc<CSig>>,
     pub mn: MN<MSig>,
+    pub mv: MV,
+    pub fcn: ForgeCN<Arc<CSig>>,
+    pub fmn: ForgeMN,
+    pub fmv: ForgeMV,
     pub gcn: GregCN<Arc<CSig>>,
     pub gmn: GregMN,
-    pub mv: MV,
     pub namer: ClassNamer,
     pub writer_cls: GlobalRef<'static>,
     pub cleaner: Cleaner,
@@ -66,12 +68,11 @@ impl GlobalObjs {
         let av = AV::new(ldr.new_global_ref().unwrap(), jv).unwrap();
         let namer = ClassNamer { next: 0.into() };
         let cn = CN::new();
-        let fg = Forge::new(&av, &cn);
-        let mut mn = MN::new(&cn);
-        if !fg.fml_naming_is_srg {
-            fg.map_mn(&av, &mut mn)
-        }
-        let mv = MV::new(&av, &cn, &mn, fg.client.is_some());
+        let fcn = ForgeCN::new();
+        let fmn = ForgeMN::new(&cn, &fcn);
+        let fmv = ForgeMV::new(&av, &cn, &fcn, &fmn);
+        let mn = MN::new(&av, &cn, &fmv);
+        let mv = MV::new(&av, &cn, &mn, fmv.client.is_some());
         let gcn = GregCN::new();
 
         // Class Writer
@@ -105,12 +106,14 @@ impl GlobalObjs {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
             tile_utils: TileUtils::new(&av, &cn, &mn, &namer),
             cleaner: Cleaner::new(&av, &namer),
-            gmn: GregMN::new(&gcn),
+            gmn: GregMN::new(&cn, &gcn),
             namer,
+            fcn,
+            fmn,
+            fmv,
             gcn,
             cn,
             av,
-            fg,
             mn,
             mv,
             writer_cls,

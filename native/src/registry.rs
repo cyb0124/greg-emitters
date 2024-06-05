@@ -10,16 +10,16 @@ pub fn init() {
     ti().add_capabilities(CAN_RETRANSFORM_CLASSES).unwrap();
     ti().set_event_callbacks(&[0, 0, 0, 0, class_file_load_hook_dyn()]).unwrap();
     ti().set_event_notification_mode(true, JVMTI_EVENT_CLASS_FILE_LOAD_HOOK, 0).unwrap();
-    let fg = &objs().fg;
-    add_forge_listener(&fg.mod_evt_bus, fg.reg_evt_sig.sig.to_bytes(), on_forge_reg_dyn());
-    if let Some(fgc) = &fg.client {
-        add_forge_listener(&fg.mod_evt_bus, fgc.atlas_evt_sig.sig.to_bytes(), on_forge_atlas_dyn());
-        add_forge_listener(&fg.mod_evt_bus, fgc.renderers_evt_sig.sig.to_bytes(), on_forge_renderers_dyn())
+    let GlobalObjs { fcn, fmv, .. } = objs();
+    add_forge_listener(&fmv.mod_evt_bus, fcn.reg_evt.sig.to_bytes(), on_forge_reg_dyn());
+    if fmv.client.is_some() {
+        add_forge_listener(&fmv.mod_evt_bus, fcn.atlas_evt.sig.to_bytes(), on_forge_atlas_dyn());
+        add_forge_listener(&fmv.mod_evt_bus, fcn.renderers_evt.sig.to_bytes(), on_forge_renderers_dyn())
     }
 }
 
 pub fn add_forge_listener(bus: &GlobalRef<'static>, evt_sig: &[u8], func: usize) {
-    let GlobalObjs { av, namer, fg, .. } = objs();
+    let GlobalObjs { av, namer, fmv, .. } = objs();
     let name = namer.next();
     let mut cls = av.new_class_node(av.ldr.jni, &name.slash, c"java/lang/Object").unwrap();
     cls.add_interfaces(&av, [c"java/util/function/Consumer"]).unwrap();
@@ -29,7 +29,7 @@ pub fn add_forge_listener(bus: &GlobalRef<'static>, evt_sig: &[u8], func: usize)
     cls.class_methods(&av).unwrap().collection_add(&av.jv, accept.new_method_node(&av, cls.jni, ACC_PUBLIC | ACC_NATIVE).unwrap().raw).unwrap();
     cls = av.ldr.define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
     cls.register_natives(&[accept.native(func)]).unwrap();
-    bus.call_void_method(fg.evt_bus_add_listener, &[cls.alloc_object().unwrap().raw]).unwrap()
+    bus.call_void_method(fmv.evt_bus_add_listener, &[cls.alloc_object().unwrap().raw]).unwrap()
 }
 
 pub fn make_resource_loc<'a>(jni: &'a JNI, ns: &CStr, id: &CStr) -> LocalRef<'a> {
@@ -47,22 +47,22 @@ pub fn add_greg_dyn_resource(jni: &JNI, gmv: &GregMV, id: impl Into<Vec<u8>>, js
 }
 
 pub fn forge_reg<'a>(evt: &impl JRef<'a>, id: &str, value: usize) {
-    let fg = &objs().fg;
-    let reg = evt.call_object_method(fg.reg_evt_fg_reg, &[]).unwrap().unwrap();
+    let fmv = &objs().fmv;
+    let reg = evt.call_object_method(fmv.reg_evt_forge_reg, &[]).unwrap().unwrap();
     let key = reg.jni.new_utf(&cs(format!("{MOD_ID}:{id}"))).unwrap();
-    reg.call_void_method(fg.fg_reg_reg, &[key.raw, value]).unwrap()
+    reg.call_void_method(fmv.forge_reg_reg, &[key.raw, value]).unwrap()
 }
 
 #[dyn_abi]
 fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
-    let GlobalObjs { fg, av, mtx, .. } = objs();
+    let GlobalObjs { fmv, av, mtx, .. } = objs();
     let mut lk = mtx.lock(jni).unwrap();
     let lk = &mut *lk;
     let evt = BorrowedRef::new(jni, &evt);
-    let key = evt.call_object_method(fg.reg_evt_key, &[]).unwrap().unwrap();
-    if key.equals(&av.jv, fg.key_blocks.raw).unwrap() {
+    let key = evt.call_object_method(fmv.reg_evt_key, &[]).unwrap().unwrap();
+    if key.equals(&av.jv, fmv.reg_key_blocks.raw).unwrap() {
         lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &mut lk.tiers, &evt));
-    } else if key.equals(&av.jv, fg.key_tile_types.raw).unwrap() {
+    } else if key.equals(&av.jv, fmv.reg_key_tile_types.raw).unwrap() {
         forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
     }
 }
@@ -70,19 +70,18 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
 #[dyn_abi]
 fn on_forge_renderers(jni: &JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
-    let fgc = objs().fg.client.uref();
+    let fmvc = objs().fmv.client.uref();
     let lk = objs().mtx.lock(jni).unwrap();
     let defs = lk.emitter_blocks.get().unwrap();
-    evt.call_void_method(fgc.renderers_evt_reg, &[defs.tile_type.raw, defs.renderer_provider.uref().raw]).unwrap()
+    evt.call_void_method(fmvc.renderers_evt_reg, &[defs.tile_type.raw, defs.renderer_provider.uref().raw]).unwrap()
 }
 
 #[dyn_abi]
 fn on_forge_atlas(jni: &'static JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
-    let GlobalObjs { av, cn, mn, mv, fg, mtx, .. } = objs();
-    let fgc = fg.client.uref();
+    let GlobalObjs { av, cn, mn, mv, fmv, mtx, .. } = objs();
     let mvc = mv.client.uref();
-    let atlas = evt.call_object_method(fgc.atlas_evt_get_atlas, &[]).unwrap().unwrap();
+    let atlas = evt.call_object_method(fmv.client.uref().atlas_evt_get_atlas, &[]).unwrap().unwrap();
     let loc = atlas.call_object_method(mvc.atlas_loc, &[]).unwrap().unwrap();
     if loc.equals(&av.jv, mvc.atlas_loc_blocks.raw).unwrap() {
         let mut lk = mtx.lock(jni).unwrap();

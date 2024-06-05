@@ -6,10 +6,10 @@ use crate::{
     mapping_base::*,
     objs,
 };
-use alloc::sync::Arc;
+use alloc::{format, sync::Arc};
 use core::{ffi::CStr, mem::transmute};
 use macros::dyn_abi;
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 
 pub const TAG_SERVER: &CStr = c"s";
 pub const TAG_COMMON: &CStr = c"c";
@@ -19,6 +19,16 @@ pub fn write_tag<'a>(tag: &impl JRef<'a>, key: &CStr, value: &impl Serialize) {
     let ba = tag.jni().new_byte_array(data.len() as _).unwrap();
     ba.write_byte_array(&data, 0).unwrap();
     tag.call_void_method(objs().mv.nbt_compound_put_byte_array, &[ba.jni.new_utf(key).unwrap().raw, ba.raw]).unwrap()
+}
+
+pub fn read_tag<'a, T: DeserializeOwned>(tag: &impl JRef<'a>, key: &CStr, value: &mut T) -> bool {
+    let blob = tag.call_object_method(objs().mv.nbt_compound_get_byte_array, &[tag.jni().new_utf(key).unwrap().raw]).unwrap().unwrap();
+    let data = blob.crit_elems().unwrap();
+    let false = data.is_empty() else { return true };
+    let Err(e) = T::deserialize_in_place(&mut postcard::Deserializer::from_bytes(&*data), value) else { return true };
+    drop(data);
+    objs().av.jv.runtime_exception.with_jni(blob.jni).throw_new(&cs(format!("{e}"))).unwrap();
+    false
 }
 
 pub type TileMakerFn = fn(&'static JNI, pos: usize, state: usize) -> usize;
@@ -64,6 +74,22 @@ pub fn tile_get_update_packet_impl<'a>(jni: &'a JNI) -> LocalRef<'a> {
         av.new_insn(jni, OP_ARETURN).unwrap(),
     ];
     let method = mn.tile_get_update_packet.new_method_node(av, jni, ACC_PUBLIC).unwrap();
+    method.method_insns(av).unwrap().append_insns(av, insns).unwrap();
+    method
+}
+
+pub fn non_null_supplier_get_self_impl<'a>(jni: &'a JNI) -> LocalRef<'a> {
+    let GlobalObjs { av, fmn, .. } = objs();
+    let method = fmn.non_null_supplier_get.new_method_node(av, jni, ACC_PUBLIC).unwrap();
+    let insns = [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()];
+    method.method_insns(av).unwrap().append_insns(av, insns).unwrap();
+    method
+}
+
+pub fn const_long_impl<'a>(jni: &'a JNI, mn: &MSig, value: i64) -> LocalRef<'a> {
+    let av = &objs().av;
+    let method = mn.new_method_node(av, jni, ACC_PUBLIC).unwrap();
+    let insns = [av.new_ldc_insn(jni, av.jv.wrap_long(jni, value).unwrap().raw).unwrap(), av.new_insn(jni, OP_LRETURN).unwrap()];
     method.method_insns(av).unwrap().append_insns(av, insns).unwrap();
     method
 }

@@ -2,13 +2,13 @@ use crate::{
     asm::*,
     cleaner::Cleanable,
     client_utils::{read_pose, DrawContext},
-    geometry::{lerp, new_voxel_shape, DIR_ATTS},
+    geometry::{lerp, new_voxel_shape, read_dir, DIR_ATTS},
     global::{GlobalObjs, Tier},
     jvm::*,
     mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
-    tile_utils::{tile_get_update_packet_impl, write_tag, TAG_COMMON},
+    tile_utils::{const_long_impl, non_null_supplier_get_self_impl, read_tag, tile_get_update_packet_impl, write_tag, TAG_COMMON, TAG_SERVER},
 };
 use alloc::{format, sync::Arc};
 use core::{
@@ -27,6 +27,7 @@ pub struct EmitterBlocks {
     block_tier: usize,
     tile_cls: GlobalRef<'static>,
     tile_p: usize,
+    tile_energy_container_cap: usize,
     pub tile_type: GlobalRef<'static>,
     pub renderer_provider: Option<GlobalRef<'static>>,
     shapes: [GlobalRef<'static>; 6],
@@ -36,20 +37,40 @@ pub struct EmitterBlocks {
 impl EmitterBlocks {
     pub fn init(jni: &'static JNI, tiers: &mut [Tier], reg_evt: &impl JRef<'static>) -> Self {
         // Tile
-        let GlobalObjs { av, cn, mn, mv, namer, tile_utils, .. } = objs();
+        let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, namer, tile_utils, .. } = objs();
         let mut name = namer.next();
         let mut cls = av.new_class_node(jni, &name.slash, &cn.tile.slash).unwrap();
-        cls.class_fields(av).unwrap().collection_extend(&av.jv, [av.new_field_node(jni, c"0", c"J", 0, 0).unwrap()]).unwrap();
+        cls.add_interfaces(av, [&*fcn.non_null_supplier.slash, &*gcn.energy_container.slash]).unwrap();
+        let fields = [av.new_field_node(jni, c"0", c"J", 0, 0).unwrap(), av.new_field_node(jni, c"0", &fcn.lazy_opt.sig, 0, 0).unwrap()];
+        cls.class_fields(av).unwrap().collection_extend(&av.jv, fields).unwrap();
         let methods = [
             tile_get_update_packet_impl(jni),
+            non_null_supplier_get_self_impl(jni),
             mn.tile_get_update_tag.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.tile_load.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.tile_save_additional.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            fmn.get_cap.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            fmn.invalidate_caps.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            gmn.can_input_eu_from_side.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            gmn.accept_eu.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            gmn.change_eu.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            gmn.get_eu_stored.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            gmn.get_eu_capacity.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            const_long_impl(jni, &gmn.get_input_amps, 1),
+            gmn.get_input_volts.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
         ];
         let natives = [
             mn.tile_get_update_tag.native(get_update_tag_dyn()),
             mn.tile_load.native(on_load_dyn()),
             mn.tile_save_additional.native(save_additional_dyn()),
+            fmn.get_cap.native(get_cap_dyn()),
+            fmn.invalidate_caps.native(invalidate_caps_dyn()),
+            gmn.can_input_eu_from_side.native(can_input_eu_from_side_dyn()),
+            gmn.accept_eu.native(accept_eu_dyn()),
+            gmn.change_eu.native(change_eu_dyn()),
+            gmn.get_eu_stored.native(get_eu_stored_dyn()),
+            gmn.get_eu_capacity.native(get_eu_capacity_dyn()),
+            gmn.get_input_volts.native(get_input_volts_dyn()),
         ];
         cls.class_methods(av).unwrap().collection_extend(&av.jv, methods).unwrap();
         cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
@@ -120,6 +141,7 @@ impl EmitterBlocks {
         Self {
             block_tier,
             tile_p: tile_cls.get_field_id(c"0", c"J").unwrap(),
+            tile_energy_container_cap: tile_cls.get_field_id(c"0", &fcn.lazy_opt.sig).unwrap(),
             tile_cls,
             tile_type: tile_utils.define_tile_type(&blocks, |jni, pos, state| new_tile(jni, 0, pos, state)),
             renderer_provider,
@@ -128,7 +150,8 @@ impl EmitterBlocks {
         }
     }
 
-    fn from_tile<'a>(&self, tile: &impl JRef<'a>) -> &'a Emitter { unsafe { &*(tile.get_long_field(self.tile_p) as *const Emitter) } }
+    // Borrowing self to ensure lock is held.
+    fn from_tile<'a>(&'a self, tile: &impl JRef<'a>) -> &'a Emitter { unsafe { &*(tile.get_long_field(self.tile_p) as *const Emitter) } }
 }
 
 #[dyn_abi]
@@ -161,13 +184,9 @@ fn get_render_shape(_: &JNI, _this: usize, _state: usize) -> usize { objs().mv.r
 
 #[dyn_abi]
 fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buffer_source: usize, light: i32, overlay: i32) {
-    let GlobalObjs { mtx, mv, .. } = objs();
     let tile = BorrowedRef::new(jni, &tile);
-    let state = tile.call_object_method(mv.tile_get_block_state, &[]).unwrap().unwrap();
-    let block = state.call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
-    let lk = mtx.lock(jni).unwrap();
+    let lk = objs().mtx.lock(jni).unwrap();
     let defs = lk.emitter_blocks.get().unwrap();
-    let tier = block.get_byte_field(defs.block_tier);
     let emitter = defs.from_tile(&tile);
     let common = emitter.common.borrow();
     let Some(dir) = common.dir else { return };
@@ -204,7 +223,7 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
     let mut n0: [_; 4] = array::from_fn(|i| (p0.get(i + 1).unwrap_or(&top_p) - p0[i]).cross(&vector![-base.y, 0., base.x]).normalize());
     let mut m0 = n0.map(|n| tf * n);
     let rot = UnitQuaternion::from_euler_angles(0., TAU / N_SEGS as f32, 0.);
-    let spr = lk.tiers[tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
+    let spr = lk.tiers[emitter.tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
     for _ in 0..N_SEGS / 2 {
         let (p1, n1) = (p0.map(|p| rot * p), n0.map(|n| rot * n));
         let (p2, n2) = (p1.map(|p| rot * p), n1.map(|n| rot * n));
@@ -240,12 +259,100 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
 }
 
 #[dyn_abi]
-fn new_tile(jni: &JNI, _this: usize, pos: usize, state: usize) -> usize {
-    let GlobalObjs { mv, mtx, cleaner, .. } = objs();
+fn get_cap(jni: &JNI, this: usize, cap: usize, side: usize) -> usize {
+    let GlobalObjs { fmv, mtx, .. } = objs();
+    let lk = mtx.lock(jni).unwrap();
+    let this = BorrowedRef::new(jni, &this);
+    if BorrowedRef::new(jni, &cap).is_same_object(lk.gmv.get().unwrap().energy_container_cap.raw) {
+        this.get_object_field(lk.emitter_blocks.get().unwrap().tile_energy_container_cap).unwrap().into_raw()
+    } else {
+        this.call_nonvirtual_object_method(fmv.cap_provider.raw, fmv.get_cap, &[cap, side]).unwrap().unwrap().into_raw()
+    }
+}
+
+#[dyn_abi]
+fn invalidate_caps(jni: &JNI, this: usize) {
+    let GlobalObjs { fmv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let defs = lk.emitter_blocks.get().unwrap();
+    let this = BorrowedRef::new(jni, &this);
+    this.call_nonvirtual_void_method(fmv.cap_provider.raw, fmv.invalidate_caps, &[]).unwrap();
+    this.get_object_field(defs.tile_energy_container_cap).unwrap().call_void_method(fmv.lazy_opt_invalidate, &[]).unwrap()
+}
+
+#[dyn_abi]
+fn get_eu_stored(jni: &JNI, this: usize) -> i64 {
+    objs().mtx.lock(jni).unwrap().emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).server.borrow().energy
+}
+
+#[dyn_abi]
+fn get_eu_capacity(jni: &JNI, this: usize) -> i64 {
+    let lk = objs().mtx.lock(jni).unwrap();
+    lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).eu_capacity(&lk.tiers)
+}
+
+#[dyn_abi]
+fn get_input_volts(jni: &JNI, this: usize) -> i64 {
+    let lk = objs().mtx.lock(jni).unwrap();
+    lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).volts(&lk.tiers)
+}
+
+#[dyn_abi]
+fn can_input_eu_from_side(jni: &JNI, this: usize, in_side: usize) -> bool {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this));
+    let result = Some(read_dir(&BorrowedRef::new(jni, &in_side)) ^ 1) == emitter.common.borrow().dir;
+    result
+}
+
+#[dyn_abi]
+fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i64 {
+    if amps < 1 {
+        return 0;
+    }
+    let GlobalObjs { mv, mtx, .. } = objs();
+    let lk = mtx.lock(jni).unwrap();
+    let this = BorrowedRef::new(jni, &this);
+    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&this);
+    if in_side != 0 && Some(read_dir(&BorrowedRef::new(jni, &in_side)) ^ 1) != emitter.common.borrow().dir {
+        return 0;
+    }
+    if volts > emitter.volts(&lk.tiers) {
+        let level = this.get_object_field(mv.tile_level).unwrap();
+        let pos = this.get_object_field(mv.tile_pos).unwrap();
+        let state = mv.blocks_fire.with_jni(jni).call_object_method(mv.block_default_state, &[]).unwrap().unwrap();
+        level.call_bool_method(mv.level_set_block_and_update, &[pos.raw, state.raw]).unwrap();
+        return 1;
+    }
+    let mut data = emitter.server.borrow_mut();
+    if data.energy + volts > emitter.eu_capacity(&lk.tiers) {
+        return 0;
+    }
+    data.energy += volts;
+    1
+}
+
+#[dyn_abi]
+fn change_eu(jni: &JNI, this: usize, delta: i64) -> i64 {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this));
+    let mut data = emitter.server.borrow_mut();
+    let base = data.energy;
+    data.energy = (base + delta).clamp(0, emitter.eu_capacity(&lk.tiers));
+    data.energy - base
+}
+
+#[dyn_abi]
+fn new_tile(jni: &JNI, _this: usize, pos: usize, state: usize) -> usize {
+    let GlobalObjs { mv, fmv, mtx, cleaner, .. } = objs();
+    let lk = mtx.lock(jni).unwrap();
+    let defs = lk.emitter_blocks.get().unwrap();
+    let block = BorrowedRef::new(jni, &state).call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
+    let tier = block.get_byte_field(defs.block_tier);
     let tile = defs.tile_cls.with_jni(jni).new_object(mv.tile_init, &[defs.tile_type.raw, pos, state]).unwrap();
-    let emitter = Arc::new(Emitter { common: <_>::default() });
+    let cap = fmv.lazy_opt.with_jni(jni).call_static_object_method(fmv.lazy_opt_of, &[tile.raw]).unwrap().unwrap();
+    tile.set_object_field(defs.tile_energy_container_cap, cap.raw);
+    let emitter = Arc::new(Emitter { tier, common: <_>::default(), server: <_>::default() });
     tile.set_long_field(defs.tile_p, &*emitter as *const _ as _);
     cleaner.reg(&tile, emitter);
     tile.into_raw()
@@ -256,10 +363,9 @@ fn set_placed_by(jni: &JNI, _this: usize, level: usize, pos: usize, _state: usiz
     let GlobalObjs { mv, mtx, .. } = objs();
     let mut lk = mtx.lock(jni).unwrap();
     let use_on_ctx = lk.emitter_items.get_mut().unwrap().use_on_ctx.take().unwrap().replace_jni(jni);
-    let dir = use_on_ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap();
-    let dir = dir.call_int_method(mv.dir_get_3d_value, &[]).unwrap() as u8;
+    let dir = read_dir(&use_on_ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap());
     let tile = BorrowedRef::new(jni, &level).call_object_method(mv.block_getter_get_tile, &[pos]).unwrap().unwrap();
-    lk.emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir)
+    lk.emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir);
 }
 
 #[dyn_abi]
@@ -280,40 +386,44 @@ fn save_additional(jni: &JNI, tile: usize, nbt: usize) {
     let lk = mtx.lock(jni).unwrap();
     let emitter = lk.emitter_blocks.get().unwrap().from_tile(&tile);
     tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[tag.raw]).unwrap();
-    write_tag(&tag, TAG_COMMON, &emitter.common)
+    write_tag(&tag, TAG_COMMON, &emitter.common);
+    write_tag(&tag, TAG_SERVER, &emitter.server)
 }
 
 #[dyn_abi]
 fn on_load(jni: &JNI, tile: usize, nbt: usize) {
-    let GlobalObjs { av, mv, mtx, .. } = objs();
-    let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.get().unwrap();
+    let GlobalObjs { mv, mtx, .. } = objs();
     let tile = BorrowedRef::new(jni, &tile);
-    let nbt = BorrowedRef::new(jni, &nbt);
-    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[nbt.raw]).unwrap();
-    let emitter = defs.from_tile(&tile);
-    let blob = nbt.call_object_method(mv.nbt_compound_get_byte_array, &[jni.new_utf(TAG_COMMON).unwrap().raw]).unwrap().unwrap();
-    let data = blob.byte_elems().unwrap();
-    if data.len() != 0 {
-        if let Err(e) = Common::deserialize_in_place(&mut postcard::Deserializer::from_bytes(&*data), &mut *emitter.common.borrow_mut()) {
-            return av.jv.runtime_exception.with_jni(jni).throw_new(&cs(format!("{e}"))).unwrap();
-        }
-    }
+    let tag = BorrowedRef::new(jni, &nbt);
+    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[tag.raw]).unwrap();
+    let lk = mtx.lock(jni).unwrap();
+    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&tile);
+    let _ = read_tag(&tag, TAG_COMMON, &mut *emitter.common.borrow_mut()) && read_tag(&tag, TAG_SERVER, &mut *emitter.server.borrow_mut());
 }
 
 #[derive(Default, Serialize, Deserialize)]
-struct Common {
+struct CommonData {
     dir: Option<u8>,
     polar: f32,
     azimuth: f32,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+struct ServerData {
+    energy: i64,
+}
+
 struct Emitter {
-    common: RefCell<Common>,
+    tier: u8,
+    common: RefCell<CommonData>,
+    server: RefCell<ServerData>,
 }
 
 impl Cleanable for Emitter {
-    fn free(self: Arc<Self>, jni: &JNI) {
-        // TODO:
-    }
+    fn free(self: Arc<Self>, _: &JNI) {}
+}
+
+impl Emitter {
+    fn volts(&self, tiers: &[Tier]) -> i64 { tiers[self.tier as usize].volt }
+    fn eu_capacity(&self, tiers: &[Tier]) -> i64 { self.volts(tiers) * 2 }
 }

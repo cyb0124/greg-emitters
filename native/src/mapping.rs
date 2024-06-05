@@ -1,97 +1,151 @@
 use crate::{asm::*, global::GlobalObjs, jvm::*, mapping_base::*, objs};
 use alloc::sync::Arc;
 use bstr::B;
+use core::ffi::CStr;
 use mapping_macros::Functor;
 
-pub struct Forge {
-    pub cml: GlobalRef<'static>,
+#[derive(Functor)]
+pub struct ForgeCN<T> {
+    pub cml: T,
+    pub naming_domain: T,
+    pub fml: T,
+    pub fml_java_ctx: T,
+    pub evt_bus: T,
+    pub reg_keys: T,
+    pub reg_evt: T,
+    pub forge_reg: T,
+    pub non_null_supplier: T,
+    pub lazy_opt: T,
+    pub cap: T,
+    pub cap_provider: T,
+    // Client
+    pub renderers_evt: T,
+    pub atlas_evt: T,
+}
+
+impl ForgeCN<Arc<CSig>> {
+    pub fn new() -> Self {
+        let names = ForgeCN::<&[u8]> {
+            cml: b"cpw.mods.modlauncher.Launcher",
+            naming_domain: b"cpw.mods.modlauncher.api.INameMappingService$Domain",
+            fml: b"net.minecraftforge.fml.loading.FMLLoader",
+            fml_java_ctx: b"net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext",
+            evt_bus: b"net.minecraftforge.eventbus.api.IEventBus",
+            reg_keys: b"net.minecraftforge.registries.ForgeRegistries$Keys",
+            reg_evt: b"net.minecraftforge.registries.RegisterEvent",
+            forge_reg: b"net.minecraftforge.registries.IForgeRegistry",
+            non_null_supplier: b"net.minecraftforge.common.util.NonNullSupplier",
+            lazy_opt: b"net.minecraftforge.common.util.LazyOptional",
+            cap: b"net.minecraftforge.common.capabilities.Capability",
+            cap_provider: b"net.minecraftforge.common.capabilities.CapabilityProvider",
+            renderers_evt: b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers",
+            atlas_evt: b"net.minecraftforge.client.event.TextureStitchEvent",
+        };
+        names.fmap(|x| Arc::new(CSig::new(x)))
+    }
+}
+
+pub struct ForgeMN {
+    pub get_cap: MSig,
+    pub invalidate_caps: MSig,
+    pub non_null_supplier_get: MSig,
+}
+
+impl ForgeMN {
+    pub fn new(cn: &CN<Arc<CSig>>, fcn: &ForgeCN<Arc<CSig>>) -> Self {
+        Self {
+            get_cap: MSig {
+                owner: fcn.cap_provider.clone(),
+                name: cs("getCapability"),
+                sig: msig([fcn.cap.sig.to_bytes(), cn.dir.sig.to_bytes()], fcn.lazy_opt.sig.to_bytes()),
+            },
+            invalidate_caps: MSig { owner: fcn.cap_provider.clone(), name: cs("invalidateCaps"), sig: cs("()V") },
+            non_null_supplier_get: MSig { owner: fcn.non_null_supplier.clone(), name: cs("get"), sig: cs("()Ljava/lang/Object;") },
+        }
+    }
+}
+
+pub struct ForgeMV {
+    pub cml_inst: GlobalRef<'static>,
     pub cml_get_mapper: usize,
-    pub dom_f: GlobalRef<'static>,
-    pub dom_m: GlobalRef<'static>,
+    pub naming_domain_f: GlobalRef<'static>,
+    pub naming_domain_m: GlobalRef<'static>,
     pub fml_naming_is_srg: bool,
     pub mod_evt_bus: GlobalRef<'static>,
     pub evt_bus_add_listener: usize,
-    pub key_blocks: GlobalRef<'static>,
-    pub key_tile_types: GlobalRef<'static>,
-    pub reg_evt_sig: CSig,
+    pub reg_key_blocks: GlobalRef<'static>,
+    pub reg_key_tile_types: GlobalRef<'static>,
     pub reg_evt_key: usize,
-    pub reg_evt_fg_reg: usize,
-    pub fg_reg_reg: usize,
-    pub client: Option<ForgeC>,
+    pub reg_evt_forge_reg: usize,
+    pub forge_reg_reg: usize,
+    pub lazy_opt: GlobalRef<'static>,
+    pub lazy_opt_of: usize,
+    pub lazy_opt_invalidate: usize,
+    pub cap_provider: GlobalRef<'static>,
+    pub get_cap: usize,
+    pub invalidate_caps: usize,
+    pub client: Option<ForgeMVC>,
 }
 
-pub struct ForgeC {
-    pub renderers_evt_sig: CSig,
+pub struct ForgeMVC {
     pub renderers_evt_reg: usize,
-    pub atlas_evt_sig: CSig,
     pub atlas_evt_get_atlas: usize,
 }
 
-impl Forge {
-    pub fn new(av: &AV<'static>, cn: &CN<Arc<CSig>>) -> Self {
-        let cml_sig = CSig::new(b"cpw.mods.modlauncher.Launcher");
-        let cml_cls = av.ldr.load_class(&av.jv, &cml_sig.dot).unwrap();
-        let dom_sig = CSig::new(b"cpw.mods.modlauncher.api.INameMappingService$Domain");
-        let dom_cls = av.ldr.load_class(&av.jv, &dom_sig.dot).unwrap();
-        let fml_cls = av.ldr.load_class(&av.jv, c"net.minecraftforge.fml.loading.FMLLoader").unwrap().new_global_ref().unwrap();
-        let fml_naming = fml_cls.get_static_field_id(c"naming", c"Ljava/lang/String;").unwrap();
-        let fml_naming_is_srg = &*fml_cls.get_static_object_field(fml_naming).unwrap().utf_chars().unwrap() == b"srg";
-        let fml_ctx_sig = CSig::new(b"net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext");
-        let fml_ctx_cls = av.ldr.load_class(&av.jv, &fml_ctx_sig.dot).unwrap();
-        let fml_ctx = fml_ctx_cls.get_static_method_id(c"get", &msig([], fml_ctx_sig.sig.to_bytes())).unwrap();
-        let fml_ctx = fml_ctx_cls.call_static_object_method(fml_ctx, &[]).unwrap().unwrap();
-        let evt_bus_sig = CSig::new(b"net.minecraftforge.eventbus.api.IEventBus");
-        let evt_bus = av.ldr.load_class(&av.jv, &evt_bus_sig.dot).unwrap();
-        let mod_evt_bus = fml_ctx_cls.get_method_id(c"getModEventBus", &msig([], evt_bus_sig.sig.to_bytes())).unwrap();
-        let mod_evt_bus = fml_ctx.call_object_method(mod_evt_bus, &[]).unwrap().unwrap().new_global_ref().unwrap();
-        let reg_keys = av.ldr.load_class(&av.jv, c"net.minecraftforge.registries.ForgeRegistries$Keys").unwrap();
-        let key_blocks = reg_keys.get_static_field_id(c"BLOCKS", &cn.resource_key.sig).unwrap();
-        let key_tile_types = reg_keys.get_static_field_id(c"BLOCK_ENTITY_TYPES", &cn.resource_key.sig).unwrap();
-        let reg_evt_sig = CSig::new(b"net.minecraftforge.registries.RegisterEvent");
-        let reg_evt = av.ldr.load_class(&av.jv, &reg_evt_sig.dot).unwrap();
-        let fg_reg_sig = CSig::new(b"net.minecraftforge.registries.IForgeRegistry");
-        let fg_reg_cls = av.ldr.load_class(&av.jv, &fg_reg_sig.dot).unwrap();
-        let dist = fml_cls.get_static_field_id(c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;").unwrap();
-        let dist = fml_cls.get_static_object_field(dist).unwrap();
+fn static_field<'a>(cv: &GlobalRef<'a>, name: &CStr, sig: &CStr) -> GlobalRef<'a> {
+    cv.get_static_object_field(cv.get_static_field_id(name, sig).unwrap()).unwrap().new_global_ref().unwrap()
+}
+
+impl ForgeMV {
+    pub fn new(av: &AV<'static>, cn: &CN<Arc<CSig>>, fcn: &ForgeCN<Arc<CSig>>, fmn: &ForgeMN) -> Self {
+        let load = |csig: &Arc<CSig>| av.ldr.load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
+        let cml = load(&fcn.cml);
+        let naming_domain = load(&fcn.naming_domain);
+        let fml = av.ldr.load_class(&av.jv, c"net.minecraftforge.fml.loading.FMLLoader").unwrap().new_global_ref().unwrap();
+        let fml_naming = fml.get_static_field_id(c"naming", c"Ljava/lang/String;").unwrap();
+        let fml_naming_is_srg = &*fml.get_static_object_field(fml_naming).unwrap().utf_chars().unwrap() == b"srg";
+        let fml_java_ctx = load(&fcn.fml_java_ctx);
+        let fml_ctx_inst = fml_java_ctx.get_static_method_id(c"get", &msig([], fcn.fml_java_ctx.sig.to_bytes())).unwrap();
+        let fml_ctx_inst = fml_java_ctx.call_static_object_method(fml_ctx_inst, &[]).unwrap().unwrap();
+        let evt_bus = load(&fcn.evt_bus);
+        let mod_evt_bus = fml_java_ctx.get_method_id(c"getModEventBus", &msig([], fcn.evt_bus.sig.to_bytes())).unwrap();
+        let mod_evt_bus = fml_ctx_inst.call_object_method(mod_evt_bus, &[]).unwrap().unwrap().new_global_ref().unwrap();
+        let reg_keys = load(&fcn.reg_keys);
+        let reg_evt = load(&fcn.reg_evt);
+        let forge_reg = load(&fcn.forge_reg);
+        let lazy_opt = load(&fcn.lazy_opt);
+        let cap_provider = load(&fcn.cap_provider);
+        let dist = static_field(&fml, c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
         let is_client = dist.call_bool_method(dist.get_object_class().get_method_id(c"isClient", c"()Z").unwrap(), &[]).unwrap();
         Self {
-            cml: cml_cls.get_static_object_field(cml_cls.get_static_field_id(c"INSTANCE", &cml_sig.sig).unwrap()).unwrap().new_global_ref().unwrap(),
-            cml_get_mapper: cml_cls.get_method_id(c"findNameMapping", c"(Ljava/lang/String;)Ljava/util/Optional;").unwrap(),
-            dom_f: dom_cls.get_static_object_field(dom_cls.get_static_field_id(c"FIELD", &dom_sig.sig).unwrap()).unwrap().new_global_ref().unwrap(),
-            dom_m: dom_cls.get_static_object_field(dom_cls.get_static_field_id(c"METHOD", &dom_sig.sig).unwrap()).unwrap().new_global_ref().unwrap(),
+            cml_inst: static_field(&cml, c"INSTANCE", &fcn.cml.sig),
+            cml_get_mapper: cml.get_method_id(c"findNameMapping", c"(Ljava/lang/String;)Ljava/util/Optional;").unwrap(),
+            naming_domain_f: static_field(&naming_domain, c"FIELD", &fcn.naming_domain.sig),
+            naming_domain_m: static_field(&naming_domain, c"METHOD", &fcn.naming_domain.sig),
             fml_naming_is_srg,
             mod_evt_bus,
             evt_bus_add_listener: evt_bus.get_method_id(c"addListener", c"(Ljava/util/function/Consumer;)V").unwrap(),
-            key_blocks: reg_keys.get_static_object_field(key_blocks).unwrap().new_global_ref().unwrap(),
-            key_tile_types: reg_keys.get_static_object_field(key_tile_types).unwrap().new_global_ref().unwrap(),
-            reg_evt_sig,
+            reg_key_blocks: static_field(&reg_keys, c"BLOCKS", &cn.resource_key.sig),
+            reg_key_tile_types: static_field(&reg_keys, c"BLOCK_ENTITY_TYPES", &cn.resource_key.sig),
             reg_evt_key: reg_evt.get_method_id(c"getRegistryKey", &msig([], cn.resource_key.sig.to_bytes())).unwrap(),
-            reg_evt_fg_reg: reg_evt.get_method_id(c"getForgeRegistry", &msig([], fg_reg_sig.sig.to_bytes())).unwrap(),
-            fg_reg_reg: fg_reg_cls.get_method_id(c"register", c"(Ljava/lang/String;Ljava/lang/Object;)V").unwrap(),
+            reg_evt_forge_reg: reg_evt.get_method_id(c"getForgeRegistry", &msig([], fcn.forge_reg.sig.to_bytes())).unwrap(),
+            forge_reg_reg: forge_reg.get_method_id(c"register", c"(Ljava/lang/String;Ljava/lang/Object;)V").unwrap(),
+            lazy_opt_of: lazy_opt.get_static_method_id(c"of", &msig([fcn.non_null_supplier.sig.to_bytes()], fcn.lazy_opt.sig.to_bytes())).unwrap(),
+            lazy_opt_invalidate: lazy_opt.get_method_id(c"invalidate", c"()V").unwrap(),
+            lazy_opt,
+            get_cap: fmn.get_cap.get_method_id(&cap_provider).unwrap(),
+            invalidate_caps: fmn.invalidate_caps.get_method_id(&cap_provider).unwrap(),
+            cap_provider,
             client: is_client.then(|| {
-                let renderers_evt_sig = CSig::new(b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers");
-                let renderers_evt = av.ldr.load_class(&av.jv, &renderers_evt_sig.dot).unwrap().new_global_ref().unwrap();
+                let renderers_evt = load(&fcn.renderers_evt);
                 let renderers_evt_reg = msig([cn.tile_type.sig.to_bytes(), cn.tile_renderer_provider.sig.to_bytes()], b"V");
-                let atlas_evt_sig = CSig::new(b"net.minecraftforge.client.event.TextureStitchEvent");
-                let atlas_evt = av.ldr.load_class(&av.jv, &atlas_evt_sig.dot).unwrap().new_global_ref().unwrap();
-                ForgeC {
+                let atlas_evt = load(&fcn.atlas_evt);
+                ForgeMVC {
                     renderers_evt_reg: renderers_evt.get_method_id(c"registerBlockEntityRenderer", &renderers_evt_reg).unwrap(),
-                    renderers_evt_sig,
                     atlas_evt_get_atlas: atlas_evt.get_method_id(c"getAtlas", &msig([], cn.atlas.sig.to_bytes())).unwrap(),
-                    atlas_evt_sig,
                 }
             }),
         }
-    }
-
-    pub fn map_mn(&self, av: &AV<'static>, mn: &mut MN<MSig>) {
-        let from = av.ldr.jni.new_utf(c"srg").unwrap();
-        let mapper = self.cml.call_object_method(self.cml_get_mapper, &[from.raw]).unwrap().unwrap().opt_get(&av.jv).unwrap().unwrap();
-        mn.apply(|x| {
-            let name = mapper.jni.new_utf(&x.name).unwrap();
-            let name = mapper.bifunc_apply(&av.jv, if x.is_method() { self.dom_m.raw } else { self.dom_f.raw }, name.raw);
-            x.name = cs(name.unwrap().unwrap().utf_chars().unwrap().to_vec())
-        })
     }
 }
 
@@ -101,6 +155,7 @@ pub struct CN<T> {
     pub block_beh: T,
     pub block_beh_props: T,
     pub block_getter: T,
+    pub blocks: T,
     pub level: T,
     pub base_tile_block: T,
     pub tile_block: T,
@@ -156,6 +211,7 @@ impl CN<Arc<CSig>> {
             block_beh: b"net.minecraft.world.level.block.state.BlockBehaviour",
             block_beh_props: b"net.minecraft.world.level.block.state.BlockBehaviour$Properties",
             block_getter: b"net.minecraft.world.level.BlockGetter",
+            blocks: b"net.minecraft.world.level.block.Blocks",
             level: b"net.minecraft.world.level.Level",
             base_tile_block: b"net.minecraft.world.level.block.BaseEntityBlock",
             tile_block: b"net.minecraft.world.level.block.EntityBlock",
@@ -212,6 +268,7 @@ pub struct MN<T> {
     pub base_tile_block_init: T,
     pub tile_block_new_tile: T,
     pub block_set_placed_by: T,
+    pub block_default_state: T,
     pub block_beh_props_of: T,
     pub block_beh_props_strength: T,
     pub block_beh_props_dyn_shape: T,
@@ -222,6 +279,7 @@ pub struct MN<T> {
     pub block_item_init: T,
     pub block_getter_get_tile: T,
     pub block_state_get_block: T,
+    pub blocks_fire: T,
     pub tile_supplier_create: T,
     pub tile_type_init: T,
     pub tile_init: T,
@@ -229,7 +287,8 @@ pub struct MN<T> {
     pub tile_get_update_tag: T,
     pub tile_get_update_packet: T,
     pub tile_save_additional: T,
-    pub tile_get_block_state: T,
+    pub tile_level: T,
+    pub tile_pos: T,
     pub sound_type_metal: T,
     pub item_get_desc_id: T,
     pub item_use_on: T,
@@ -244,6 +303,7 @@ pub struct MN<T> {
     pub nbt_compound_get_byte_array: T,
     pub use_on_ctx_get_clicked_face: T,
     pub dir_get_3d_value: T,
+    pub level_set_block_and_update: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -263,8 +323,8 @@ pub struct MN<T> {
 }
 
 impl MN<MSig> {
-    pub fn new(cn: &CN<Arc<CSig>>) -> Self {
-        MN {
+    pub fn new(av: &AV, cn: &CN<Arc<CSig>>, fmv: &ForgeMV) -> Self {
+        let mut mn = MN {
             base_tile_block_init: MSig {
                 owner: cn.base_tile_block.clone(),
                 name: cs("<init>"),
@@ -289,6 +349,7 @@ impl MN<MSig> {
                     b"V",
                 ),
             },
+            block_default_state: MSig { owner: cn.block.clone(), name: cs("m_49966_"), sig: msig([], cn.block_state.sig.to_bytes()) },
             block_beh_props_of: MSig { owner: cn.block_beh_props.clone(), name: cs("m_284310_"), sig: msig([], cn.block_beh_props.sig.to_bytes()) },
             block_beh_props_strength: MSig {
                 owner: cn.block_beh_props.clone(),
@@ -334,6 +395,7 @@ impl MN<MSig> {
                 sig: msig([cn.block_pos.sig.to_bytes()], cn.tile.sig.to_bytes()),
             },
             block_state_get_block: MSig { owner: cn.block_state.clone(), name: cs("m_60734_"), sig: msig([], cn.block.sig.to_bytes()) },
+            blocks_fire: MSig { owner: cn.blocks.clone(), name: cs("f_50083_"), sig: cn.block.sig.clone() },
             tile_supplier_create: MSig {
                 owner: cn.tile_supplier.clone(),
                 name: cs("m_155267_"),
@@ -353,7 +415,8 @@ impl MN<MSig> {
             tile_get_update_tag: MSig { owner: cn.tile.clone(), name: cs("m_5995_"), sig: msig([], cn.nbt_compound.sig.to_bytes()) },
             tile_get_update_packet: MSig { owner: cn.tile.clone(), name: cs("m_58483_"), sig: msig([], cn.packet.sig.to_bytes()) },
             tile_save_additional: MSig { owner: cn.tile.clone(), name: cs("m_183515_"), sig: msig([cn.nbt_compound.sig.to_bytes()], b"V") },
-            tile_get_block_state: MSig { owner: cn.tile.clone(), name: cs("m_58900_"), sig: msig([], cn.block_state.sig.to_bytes()) },
+            tile_level: MSig { owner: cn.tile.clone(), name: cs("f_58857_"), sig: cn.level.sig.clone() },
+            tile_pos: MSig { owner: cn.tile.clone(), name: cs("f_58858_"), sig: cn.block_pos.sig.clone() },
             sound_type_metal: MSig { owner: cn.sound_type.clone(), name: cs("f_56743_"), sig: cn.sound_type.sig.clone() },
             item_get_desc_id: MSig { owner: cn.item.clone(), name: cs("m_5524_"), sig: cs("()Ljava/lang/String;") },
             item_use_on: MSig {
@@ -384,6 +447,11 @@ impl MN<MSig> {
             nbt_compound_get_byte_array: MSig { owner: cn.nbt_compound.clone(), name: cs("m_128463_"), sig: cs("(Ljava/lang/String;)[B") },
             use_on_ctx_get_clicked_face: MSig { owner: cn.use_on_ctx.clone(), name: cs("m_43719_"), sig: msig([], cn.dir.sig.to_bytes()) },
             dir_get_3d_value: MSig { owner: cn.dir.clone(), name: cs("m_122411_"), sig: cs("()I") },
+            level_set_block_and_update: MSig {
+                owner: cn.level.clone(),
+                name: cs("m_46597_"),
+                sig: msig([cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes()], b"Z"),
+            },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -416,12 +484,23 @@ impl MN<MSig> {
                 sig: msig([cn.render_type.sig.to_bytes()], cn.vertex_consumer.sig.to_bytes()),
             },
             vertex_consumer_vertex: MSig { owner: cn.vertex_consumer.clone(), name: cs("m_5954_"), sig: cs("(FFFFFFFFFIIFFF)V") },
+        };
+        if !fmv.fml_naming_is_srg {
+            let from = av.ldr.jni.new_utf(c"srg").unwrap();
+            let mapper = fmv.cml_inst.call_object_method(fmv.cml_get_mapper, &[from.raw]).unwrap().unwrap().opt_get(&av.jv).unwrap().unwrap();
+            mn.apply(|x| {
+                let name = mapper.jni.new_utf(&x.name).unwrap();
+                let name = mapper.bifunc_apply(&av.jv, if x.is_method() { fmv.naming_domain_m.raw } else { fmv.naming_domain_f.raw }, name.raw);
+                x.name = cs(name.unwrap().unwrap().utf_chars().unwrap().to_vec())
+            })
         }
+        mn
     }
 }
 
 pub struct MV {
     pub base_tile_block_init: usize,
+    pub block_default_state: usize,
     pub block_beh_props: GlobalRef<'static>,
     pub block_beh_props_of: usize,
     pub block_beh_props_strength: usize,
@@ -431,13 +510,15 @@ pub struct MV {
     pub block_item_init: usize,
     pub block_getter_get_tile: usize,
     pub block_state_get_block: usize,
+    pub blocks_fire: GlobalRef<'static>,
     pub tile_type: GlobalRef<'static>,
     pub tile_type_init: usize,
     pub tile: GlobalRef<'static>,
     pub tile_init: usize,
     pub tile_load: usize,
     pub tile_save_additional: usize,
-    pub tile_get_block_state: usize,
+    pub tile_level: usize,
+    pub tile_pos: usize,
     pub sound_type_metal: GlobalRef<'static>,
     pub item: GlobalRef<'static>,
     pub item_get_desc_id: usize,
@@ -455,6 +536,7 @@ pub struct MV {
     pub nbt_compound_get_byte_array: usize,
     pub use_on_ctx_get_clicked_face: usize,
     pub dir_get_3d_value: usize,
+    pub level_set_block_and_update: usize,
     pub client: Option<MVC>,
 }
 
@@ -476,9 +558,9 @@ pub struct MVC {
 impl MV {
     pub fn new(av: &AV<'static>, cn: &CN<Arc<CSig>>, mn: &MN<MSig>, is_client: bool) -> MV {
         let load = |csig: &Arc<CSig>| av.ldr.load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
-        let static_field =
-            |cv: &GlobalRef<'static>, mn: &MSig| cv.get_static_object_field(mn.get_static_field_id(cv).unwrap()).unwrap().new_global_ref().unwrap();
+        let static_field = |cv: &GlobalRef<'static>, mn: &MSig| static_field(cv, &mn.name, &mn.sig);
         let base_tile_block = load(&cn.base_tile_block);
+        let block = load(&cn.block);
         let block_beh_props = load(&cn.block_beh_props);
         let block_item = load(&cn.block_item);
         let block_getter = load(&cn.block_getter);
@@ -494,8 +576,10 @@ impl MV {
         let nbt_compound = load(&cn.nbt_compound);
         let use_on_ctx = load(&cn.use_on_ctx);
         let dir = load(&cn.dir);
+        let level = load(&cn.level);
         MV {
             base_tile_block_init: mn.base_tile_block_init.get_method_id(&base_tile_block).unwrap(),
+            block_default_state: mn.block_default_state.get_method_id(&block).unwrap(),
             block_beh_props_of: mn.block_beh_props_of.get_static_method_id(&block_beh_props).unwrap(),
             block_beh_props_strength: mn.block_beh_props_strength.get_method_id(&block_beh_props).unwrap(),
             block_beh_props_dyn_shape: mn.block_beh_props_dyn_shape.get_method_id(&block_beh_props).unwrap(),
@@ -506,12 +590,14 @@ impl MV {
             block_item,
             block_getter_get_tile: mn.block_getter_get_tile.get_method_id(&block_getter).unwrap(),
             block_state_get_block: mn.block_state_get_block.get_method_id(&block_state).unwrap(),
+            blocks_fire: static_field(&load(&cn.blocks), &mn.blocks_fire),
             tile_type_init: mn.tile_type_init.get_method_id(&tile_type).unwrap(),
             tile_type,
             tile_init: mn.tile_init.get_method_id(&tile).unwrap(),
             tile_load: mn.tile_load.get_method_id(&tile).unwrap(),
             tile_save_additional: mn.tile_save_additional.get_method_id(&tile).unwrap(),
-            tile_get_block_state: mn.tile_get_block_state.get_method_id(&tile).unwrap(),
+            tile_level: mn.tile_level.get_field_id(&tile).unwrap(),
+            tile_pos: mn.tile_pos.get_field_id(&tile).unwrap(),
             tile,
             sound_type_metal: static_field(&sound_type, &mn.sound_type_metal),
             item_get_desc_id: mn.item_get_desc_id.get_method_id(&item).unwrap(),
@@ -529,6 +615,7 @@ impl MV {
             nbt_compound,
             use_on_ctx_get_clicked_face: mn.use_on_ctx_get_clicked_face.get_method_id(&use_on_ctx).unwrap(),
             dir_get_3d_value: mn.dir_get_3d_value.get_method_id(&dir).unwrap(),
+            level_set_block_and_update: mn.level_set_block_and_update.get_method_id(&level).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);
@@ -563,8 +650,10 @@ pub struct GregCN<T> {
     pub non_null_fn: T,
     pub creative_tab_items_gen: T,
     pub values: T,
+    pub caps: T,
     pub dyn_resource_pack: T,
     pub material_block_renderer: T,
+    pub energy_container: T,
 }
 
 impl GregCN<Arc<CSig>> {
@@ -575,8 +664,10 @@ impl GregCN<Arc<CSig>> {
             non_null_fn: b"com.tterrag.registrate.util.nullness.NonNullFunction",
             creative_tab_items_gen: b"com.gregtechceu.gtceu.common.data.GTCreativeModeTabs$RegistrateDisplayItemsGenerator",
             values: b"com.gregtechceu.gtceu.api.GTValues",
+            caps: b"com.gregtechceu.gtceu.api.capability.forge.GTCapability",
             dyn_resource_pack: b"com.gregtechceu.gtceu.data.pack.GTDynamicResourcePack",
             material_block_renderer: b"com.gregtechceu.gtceu.client.renderer.block.MaterialBlockRenderer",
+            energy_container: b"com.gregtechceu.gtceu.api.capability.IEnergyContainer",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -584,16 +675,36 @@ impl GregCN<Arc<CSig>> {
 
 pub struct GregMN {
     pub reg_item: MSig,
+    pub can_input_eu_from_side: MSig,
+    pub accept_eu: MSig,
+    pub change_eu: MSig,
+    pub get_eu_stored: MSig,
+    pub get_eu_capacity: MSig,
+    pub get_input_amps: MSig,
+    pub get_input_volts: MSig,
+    pub get_input_eu_per_sec: MSig,
 }
 
 impl GregMN {
-    pub fn new(gcn: &GregCN<Arc<CSig>>) -> Self {
+    pub fn new(cn: &CN<Arc<CSig>>, gcn: &GregCN<Arc<CSig>>) -> Self {
         GregMN {
             reg_item: MSig {
                 owner: gcn.reg.clone(),
                 name: cs("item"),
                 sig: msig([b"Ljava/lang/String;", gcn.non_null_fn.sig.to_bytes()], gcn.item_builder.sig.to_bytes()),
             },
+            can_input_eu_from_side: MSig { owner: gcn.energy_container.clone(), name: cs("inputsEnergy"), sig: msig([cn.dir.sig.to_bytes()], b"Z") },
+            accept_eu: MSig {
+                owner: gcn.energy_container.clone(),
+                name: cs("acceptEnergyFromNetwork"),
+                sig: msig([cn.dir.sig.to_bytes(), b"JJ"], b"J"),
+            },
+            change_eu: MSig { owner: gcn.energy_container.clone(), name: cs("changeEnergy"), sig: cs("(J)J") },
+            get_eu_stored: MSig { owner: gcn.energy_container.clone(), name: cs("getEnergyStored"), sig: cs("()J") },
+            get_eu_capacity: MSig { owner: gcn.energy_container.clone(), name: cs("getEnergyCapacity"), sig: cs("()J") },
+            get_input_amps: MSig { owner: gcn.energy_container.clone(), name: cs("getInputAmperage"), sig: cs("()J") },
+            get_input_volts: MSig { owner: gcn.energy_container.clone(), name: cs("getInputVoltage"), sig: cs("()J") },
+            get_input_eu_per_sec: MSig { owner: gcn.energy_container.clone(), name: cs("getInputPerSec"), sig: cs("()J") },
         }
     }
 }
@@ -602,20 +713,19 @@ pub struct GregMV {
     pub tier_names: GlobalRef<'static>,
     pub tier_volts: GlobalRef<'static>,
     pub dyn_resource_pack_data: GlobalRef<'static>,
+    pub energy_container_cap: GlobalRef<'static>,
 }
 
 impl GregMV {
     pub fn new(jni: &'static JNI) -> Self {
-        let GlobalObjs { av, gcn, .. } = objs();
+        let GlobalObjs { av, fcn, gcn, .. } = objs();
         let load = |csig: &Arc<CSig>| av.ldr.with_jni(jni).load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
-        let static_field = |cv: &GlobalRef<'static>, name, sig| {
-            cv.get_static_object_field(cv.get_static_field_id(name, sig).unwrap()).unwrap().new_global_ref().unwrap()
-        };
         let values = load(&gcn.values);
         Self {
             tier_names: static_field(&values, c"VN", c"[Ljava/lang/String;"),
             tier_volts: static_field(&values, c"V", c"[J"),
             dyn_resource_pack_data: static_field(&load(&gcn.dyn_resource_pack), c"DATA", c"Ljava/util/concurrent/ConcurrentMap;"),
+            energy_container_cap: static_field(&load(&gcn.caps), c"CAPABILITY_ENERGY_CONTAINER", &fcn.cap.sig),
         }
     }
 }
