@@ -85,15 +85,15 @@ impl EmitterBlocks {
             mn.tile_block_new_tile.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.block_beh_get_render_shape.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.block_beh_get_shape.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.block_set_placed_by.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
             mn.block_beh_get_drops.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
+            mn.block_beh_on_place.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
         ];
         let natives = [
             mn.tile_block_new_tile.native(new_tile_dyn()),
             mn.block_beh_get_render_shape.native(get_render_shape_dyn()),
             mn.block_beh_get_shape.native(get_shape_dyn()),
-            mn.block_set_placed_by.native(set_placed_by_dyn()),
             mn.block_beh_get_drops.native(get_drops_dyn()),
+            mn.block_beh_on_place.native(on_place_dyn()),
         ];
         (cls.class_methods(av).unwrap()).collection_extend(&av.jv, methods).unwrap();
         cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
@@ -151,7 +151,7 @@ impl EmitterBlocks {
     }
 
     // Borrowing self to ensure lock is held.
-    fn from_tile<'a>(&'a self, tile: &impl JRef<'a>) -> &'a Emitter { unsafe { &*(tile.get_long_field(self.tile_p) as *const Emitter) } }
+    pub fn from_tile<'a>(&'a self, tile: &impl JRef<'a>) -> &'a Emitter { unsafe { &*(tile.get_long_field(self.tile_p) as *const Emitter) } }
 }
 
 #[dyn_abi]
@@ -260,10 +260,10 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
 
 #[dyn_abi]
 fn get_cap(jni: &JNI, this: usize, cap: usize, side: usize) -> usize {
-    let GlobalObjs { fmv, mtx, .. } = objs();
+    let GlobalObjs { fmv, mtx, gmv, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let this = BorrowedRef::new(jni, &this);
-    if BorrowedRef::new(jni, &cap).is_same_object(lk.gmv.get().unwrap().energy_container_cap.raw) {
+    if BorrowedRef::new(jni, &cap).is_same_object(gmv.get().unwrap().energy_container_cap.raw) {
         this.get_object_field(lk.emitter_blocks.get().unwrap().tile_energy_container_cap).unwrap().into_raw()
     } else {
         this.call_nonvirtual_object_method(fmv.cap_provider.raw, fmv.get_cap, &[cap, side]).unwrap().unwrap().into_raw()
@@ -359,13 +359,8 @@ fn new_tile(jni: &JNI, _this: usize, pos: usize, state: usize) -> usize {
 }
 
 #[dyn_abi]
-fn set_placed_by(jni: &JNI, _this: usize, level: usize, pos: usize, _state: usize, _placer: usize, _item_stack: usize) {
-    let GlobalObjs { mv, mtx, .. } = objs();
-    let mut lk = mtx.lock(jni).unwrap();
-    let use_on_ctx = lk.emitter_items.get_mut().unwrap().use_on_ctx.take().unwrap().replace_jni(jni);
-    let dir = read_dir(&use_on_ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap());
-    let tile = BorrowedRef::new(jni, &level).call_object_method(mv.block_getter_get_tile, &[pos]).unwrap().unwrap();
-    lk.emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir);
+fn on_place(jni: &JNI, this: usize, _state: usize, level: usize, pos: usize, _old_state: usize, _moved_by_piston: bool) {
+    BorrowedRef::new(jni, &level).call_void_method(objs().mv.level_update_neighbors_for_out_signal, &[pos, this]).unwrap()
 }
 
 #[dyn_abi]
@@ -402,8 +397,8 @@ fn on_load(jni: &JNI, tile: usize, nbt: usize) {
 }
 
 #[derive(Default, Serialize, Deserialize)]
-struct CommonData {
-    dir: Option<u8>,
+pub struct CommonData {
+    pub dir: Option<u8>,
     polar: f32,
     azimuth: f32,
 }
@@ -413,9 +408,9 @@ struct ServerData {
     energy: i64,
 }
 
-struct Emitter {
+pub struct Emitter {
     tier: u8,
-    common: RefCell<CommonData>,
+    pub common: RefCell<CommonData>,
     server: RefCell<ServerData>,
 }
 

@@ -1,5 +1,5 @@
 use crate::{asm::*, global::GlobalObjs, jvm::*, mapping_base::*, objs};
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use bstr::B;
 use core::ffi::CStr;
 use mapping_macros::Functor;
@@ -38,6 +38,7 @@ impl ForgeCN<Arc<CSig>> {
             lazy_opt: b"net.minecraftforge.common.util.LazyOptional",
             cap: b"net.minecraftforge.common.capabilities.Capability",
             cap_provider: b"net.minecraftforge.common.capabilities.CapabilityProvider",
+            // Client
             renderers_evt: b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers",
             atlas_evt: b"net.minecraftforge.client.event.TextureStitchEvent",
         };
@@ -112,7 +113,6 @@ impl ForgeMV {
         let mod_evt_bus = fml_ctx_inst.call_object_method(mod_evt_bus, &[]).unwrap().unwrap().new_global_ref().unwrap();
         let reg_keys = load(&fcn.reg_keys);
         let reg_evt = load(&fcn.reg_evt);
-        let forge_reg = load(&fcn.forge_reg);
         let lazy_opt = load(&fcn.lazy_opt);
         let cap_provider = load(&fcn.cap_provider);
         let dist = static_field(&fml, c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
@@ -129,7 +129,7 @@ impl ForgeMV {
             reg_key_tile_types: static_field(&reg_keys, c"BLOCK_ENTITY_TYPES", &cn.resource_key.sig),
             reg_evt_key: reg_evt.get_method_id(c"getRegistryKey", &msig([], cn.resource_key.sig.to_bytes())).unwrap(),
             reg_evt_forge_reg: reg_evt.get_method_id(c"getForgeRegistry", &msig([], fcn.forge_reg.sig.to_bytes())).unwrap(),
-            forge_reg_reg: forge_reg.get_method_id(c"register", c"(Ljava/lang/String;Ljava/lang/Object;)V").unwrap(),
+            forge_reg_reg: load(&fcn.forge_reg).get_method_id(c"register", c"(Ljava/lang/String;Ljava/lang/Object;)V").unwrap(),
             lazy_opt_of: lazy_opt.get_static_method_id(c"of", &msig([fcn.non_null_supplier.sig.to_bytes()], fcn.lazy_opt.sig.to_bytes())).unwrap(),
             lazy_opt_invalidate: lazy_opt.get_method_id(c"invalidate", c"()V").unwrap(),
             lazy_opt,
@@ -168,6 +168,7 @@ pub struct CN<T> {
     pub tile: T,
     pub tile_supplier: T,
     pub tile_type: T,
+    pub vec3i: T,
     pub block_pos: T,
     pub block_state: T,
     pub dfu_type: T,
@@ -180,6 +181,7 @@ pub struct CN<T> {
     pub voxel_shape: T,
     pub shapes: T,
     pub collision_ctx: T,
+    pub block_place_ctx: T,
     pub use_on_ctx: T,
     pub interaction_result: T,
     pub s2c_tile_data: T,
@@ -224,6 +226,7 @@ impl CN<Arc<CSig>> {
             tile: b"net.minecraft.world.level.block.entity.BlockEntity",
             tile_supplier: b"net.minecraft.world.level.block.entity.BlockEntityType$BlockEntitySupplier",
             tile_type: b"net.minecraft.world.level.block.entity.BlockEntityType",
+            vec3i: b"net.minecraft.core.Vec3i",
             block_pos: b"net.minecraft.core.BlockPos",
             block_state: b"net.minecraft.world.level.block.state.BlockState",
             dfu_type: b"com.mojang.datafixers.types.Type",
@@ -236,6 +239,7 @@ impl CN<Arc<CSig>> {
             render_shape: b"net.minecraft.world.level.block.RenderShape",
             resource_loc: b"net.minecraft.resources.ResourceLocation",
             collision_ctx: b"net.minecraft.world.phys.shapes.CollisionContext",
+            block_place_ctx: b"net.minecraft.world.item.context.BlockPlaceContext",
             use_on_ctx: b"net.minecraft.world.item.context.UseOnContext",
             interaction_result: b"net.minecraft.world.InteractionResult",
             s2c_tile_data: b"net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket",
@@ -267,7 +271,6 @@ impl CN<Arc<CSig>> {
 pub struct MN<T> {
     pub base_tile_block_init: T,
     pub tile_block_new_tile: T,
-    pub block_set_placed_by: T,
     pub block_default_state: T,
     pub block_beh_props_of: T,
     pub block_beh_props_strength: T,
@@ -276,8 +279,15 @@ pub struct MN<T> {
     pub block_beh_get_render_shape: T,
     pub block_beh_get_shape: T,
     pub block_beh_get_drops: T,
+    pub block_beh_on_place: T,
     pub block_item_init: T,
+    pub block_item_place_block: T,
+    pub block_getter_get_block_state: T,
     pub block_getter_get_tile: T,
+    pub vec3i_x: T,
+    pub vec3i_y: T,
+    pub vec3i_z: T,
+    pub block_pos_init: T,
     pub block_state_get_block: T,
     pub blocks_fire: T,
     pub tile_supplier_create: T,
@@ -291,7 +301,6 @@ pub struct MN<T> {
     pub tile_pos: T,
     pub sound_type_metal: T,
     pub item_get_desc_id: T,
-    pub item_use_on: T,
     pub item_stack_init: T,
     pub creative_tab_items_gen_accept: T,
     pub render_shape_tile: T,
@@ -301,9 +310,14 @@ pub struct MN<T> {
     pub nbt_compound_init: T,
     pub nbt_compound_put_byte_array: T,
     pub nbt_compound_get_byte_array: T,
+    pub use_on_ctx_get_level: T,
+    pub use_on_ctx_get_clicked_pos: T,
     pub use_on_ctx_get_clicked_face: T,
-    pub dir_get_3d_value: T,
+    pub dir_3d_data: T,
+    pub dir_by_3d_data: T,
     pub level_set_block_and_update: T,
+    pub level_update_neighbors_for_out_signal: T,
+    pub level_is_client: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -334,20 +348,6 @@ impl MN<MSig> {
                 owner: cn.tile_block.clone(),
                 name: cs("m_142194_"),
                 sig: msig([cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes()], cn.tile.sig.to_bytes()),
-            },
-            block_set_placed_by: MSig {
-                owner: cn.block.clone(),
-                name: cs("m_6402_"),
-                sig: msig(
-                    [
-                        cn.level.sig.to_bytes(),
-                        cn.block_pos.sig.to_bytes(),
-                        cn.block_state.sig.to_bytes(),
-                        cn.living_entity.sig.to_bytes(),
-                        cn.item_stack.sig.to_bytes(),
-                    ],
-                    b"V",
-                ),
             },
             block_default_state: MSig { owner: cn.block.clone(), name: cs("m_49966_"), sig: msig([], cn.block_state.sig.to_bytes()) },
             block_beh_props_of: MSig { owner: cn.block_beh_props.clone(), name: cs("m_284310_"), sig: msig([], cn.block_beh_props.sig.to_bytes()) },
@@ -384,16 +384,38 @@ impl MN<MSig> {
                 name: cs("m_49635_"),
                 sig: msig([cn.block_state.sig.to_bytes(), cn.loot_builder.sig.to_bytes()], b"Ljava/util/List;"),
             },
+            block_beh_on_place: MSig {
+                owner: cn.block_beh.clone(),
+                name: cs("m_6807_"),
+                sig: msig(
+                    [cn.block_state.sig.to_bytes(), cn.level.sig.to_bytes(), cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes(), b"Z"],
+                    b"V",
+                ),
+            },
             block_item_init: MSig {
                 owner: cn.block_item.clone(),
                 name: cs("<init>"),
                 sig: msig([cn.block.sig.to_bytes(), cn.item_props.sig.to_bytes()], b"V"),
+            },
+            block_item_place_block: MSig {
+                owner: cn.block_item.clone(),
+                name: cs("m_7429_"),
+                sig: msig([cn.block_place_ctx.sig.to_bytes(), cn.block_state.sig.to_bytes()], b"Z"),
+            },
+            block_getter_get_block_state: MSig {
+                owner: cn.block_getter.clone(),
+                name: cs("m_8055_"),
+                sig: msig([cn.block_pos.sig.to_bytes()], cn.block_state.sig.to_bytes()),
             },
             block_getter_get_tile: MSig {
                 owner: cn.block_getter.clone(),
                 name: cs("m_7702_"),
                 sig: msig([cn.block_pos.sig.to_bytes()], cn.tile.sig.to_bytes()),
             },
+            vec3i_x: MSig { owner: cn.vec3i.clone(), name: cs("f_123285_"), sig: cs("I") },
+            vec3i_y: MSig { owner: cn.vec3i.clone(), name: cs("f_123286_"), sig: cs("I") },
+            vec3i_z: MSig { owner: cn.vec3i.clone(), name: cs("f_123289_"), sig: cs("I") },
+            block_pos_init: MSig { owner: cn.block_pos.clone(), name: cs("<init>"), sig: cs("(III)V") },
             block_state_get_block: MSig { owner: cn.block_state.clone(), name: cs("m_60734_"), sig: msig([], cn.block.sig.to_bytes()) },
             blocks_fire: MSig { owner: cn.blocks.clone(), name: cs("f_50083_"), sig: cn.block.sig.clone() },
             tile_supplier_create: MSig {
@@ -419,11 +441,6 @@ impl MN<MSig> {
             tile_pos: MSig { owner: cn.tile.clone(), name: cs("f_58858_"), sig: cn.block_pos.sig.clone() },
             sound_type_metal: MSig { owner: cn.sound_type.clone(), name: cs("f_56743_"), sig: cn.sound_type.sig.clone() },
             item_get_desc_id: MSig { owner: cn.item.clone(), name: cs("m_5524_"), sig: cs("()Ljava/lang/String;") },
-            item_use_on: MSig {
-                owner: cn.item.clone(),
-                name: cs("m_6225_"),
-                sig: msig([cn.use_on_ctx.sig.to_bytes()], cn.interaction_result.sig.to_bytes()),
-            },
             item_stack_init: MSig {
                 owner: cn.item_stack.clone(),
                 name: cs("<init>"),
@@ -445,13 +462,26 @@ impl MN<MSig> {
             nbt_compound_init: MSig { owner: cn.nbt_compound.clone(), name: cs("<init>"), sig: cs("()V") },
             nbt_compound_put_byte_array: MSig { owner: cn.nbt_compound.clone(), name: cs("m_128382_"), sig: cs("(Ljava/lang/String;[B)V") },
             nbt_compound_get_byte_array: MSig { owner: cn.nbt_compound.clone(), name: cs("m_128463_"), sig: cs("(Ljava/lang/String;)[B") },
+            use_on_ctx_get_level: MSig { owner: cn.use_on_ctx.clone(), name: cs("m_43725_"), sig: msig([], cn.level.sig.to_bytes()) },
+            use_on_ctx_get_clicked_pos: MSig { owner: cn.use_on_ctx.clone(), name: cs("m_8083_"), sig: msig([], cn.block_pos.sig.to_bytes()) },
             use_on_ctx_get_clicked_face: MSig { owner: cn.use_on_ctx.clone(), name: cs("m_43719_"), sig: msig([], cn.dir.sig.to_bytes()) },
-            dir_get_3d_value: MSig { owner: cn.dir.clone(), name: cs("m_122411_"), sig: cs("()I") },
+            dir_3d_data: MSig { owner: cn.dir.clone(), name: cs("f_122339_"), sig: cs("I") },
+            dir_by_3d_data: MSig {
+                owner: cn.dir.clone(),
+                name: cs("f_122348_"),
+                sig: cs(Vec::from_iter(b"[".iter().chain(cn.dir.sig.as_bytes()).copied())),
+            },
             level_set_block_and_update: MSig {
                 owner: cn.level.clone(),
                 name: cs("m_46597_"),
                 sig: msig([cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes()], b"Z"),
             },
+            level_update_neighbors_for_out_signal: MSig {
+                owner: cn.level.clone(),
+                name: cs("m_46717_"),
+                sig: msig([cn.block_pos.sig.to_bytes(), cn.block.sig.to_bytes()], b"V"),
+            },
+            level_is_client: MSig { owner: cn.level.clone(), name: cs("f_46443_"), sig: cs("Z") },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -508,7 +538,14 @@ pub struct MV {
     pub block_beh_props_sound: usize,
     pub block_item: GlobalRef<'static>,
     pub block_item_init: usize,
+    pub block_item_place_block: usize,
+    pub block_getter_get_block_state: usize,
     pub block_getter_get_tile: usize,
+    pub vec3i_x: usize,
+    pub vec3i_y: usize,
+    pub vec3i_z: usize,
+    pub block_pos: GlobalRef<'static>,
+    pub block_pos_init: usize,
     pub block_state_get_block: usize,
     pub blocks_fire: GlobalRef<'static>,
     pub tile_type: GlobalRef<'static>,
@@ -524,7 +561,6 @@ pub struct MV {
     pub item_get_desc_id: usize,
     pub item_stack: GlobalRef<'static>,
     pub item_stack_init: usize,
-    pub block_item_use_on: usize,
     pub render_shape_tile: GlobalRef<'static>,
     pub resource_loc: GlobalRef<'static>,
     pub resource_loc_init: usize,
@@ -534,9 +570,14 @@ pub struct MV {
     pub nbt_compound_init: usize,
     pub nbt_compound_put_byte_array: usize,
     pub nbt_compound_get_byte_array: usize,
+    pub use_on_ctx_get_level: usize,
+    pub use_on_ctx_get_clicked_pos: usize,
     pub use_on_ctx_get_clicked_face: usize,
-    pub dir_get_3d_value: usize,
+    pub dir_3d_data: usize,
+    pub dir_by_3d_data: GlobalRef<'static>,
     pub level_set_block_and_update: usize,
+    pub level_update_neighbors_for_out_signal: usize,
+    pub level_is_client: usize,
     pub client: Option<MVC>,
 }
 
@@ -564,6 +605,8 @@ impl MV {
         let block_beh_props = load(&cn.block_beh_props);
         let block_item = load(&cn.block_item);
         let block_getter = load(&cn.block_getter);
+        let vec3i = load(&cn.vec3i);
+        let block_pos = load(&cn.block_pos);
         let block_state = load(&cn.block_state);
         let tile_type = load(&cn.tile_type);
         let tile = load(&cn.tile);
@@ -586,9 +629,15 @@ impl MV {
             block_beh_props_sound: mn.block_beh_props_sound.get_method_id(&block_beh_props).unwrap(),
             block_beh_props,
             block_item_init: mn.block_item_init.get_method_id(&block_item).unwrap(),
-            block_item_use_on: mn.item_use_on.get_method_id(&block_item).unwrap(),
+            block_item_place_block: mn.block_item_place_block.get_method_id(&block_item).unwrap(),
             block_item,
+            block_getter_get_block_state: mn.block_getter_get_block_state.get_method_id(&block_getter).unwrap(),
             block_getter_get_tile: mn.block_getter_get_tile.get_method_id(&block_getter).unwrap(),
+            vec3i_x: mn.vec3i_x.get_field_id(&vec3i).unwrap(),
+            vec3i_y: mn.vec3i_y.get_field_id(&vec3i).unwrap(),
+            vec3i_z: mn.vec3i_z.get_field_id(&vec3i).unwrap(),
+            block_pos_init: mn.block_pos_init.get_method_id(&block_pos).unwrap(),
+            block_pos,
             block_state_get_block: mn.block_state_get_block.get_method_id(&block_state).unwrap(),
             blocks_fire: static_field(&load(&cn.blocks), &mn.blocks_fire),
             tile_type_init: mn.tile_type_init.get_method_id(&tile_type).unwrap(),
@@ -613,9 +662,14 @@ impl MV {
             nbt_compound_put_byte_array: mn.nbt_compound_put_byte_array.get_method_id(&nbt_compound).unwrap(),
             nbt_compound_get_byte_array: mn.nbt_compound_get_byte_array.get_method_id(&nbt_compound).unwrap(),
             nbt_compound,
+            use_on_ctx_get_level: mn.use_on_ctx_get_level.get_method_id(&use_on_ctx).unwrap(),
+            use_on_ctx_get_clicked_pos: mn.use_on_ctx_get_clicked_pos.get_method_id(&use_on_ctx).unwrap(),
             use_on_ctx_get_clicked_face: mn.use_on_ctx_get_clicked_face.get_method_id(&use_on_ctx).unwrap(),
-            dir_get_3d_value: mn.dir_get_3d_value.get_method_id(&dir).unwrap(),
+            dir_3d_data: mn.dir_3d_data.get_field_id(&dir).unwrap(),
+            dir_by_3d_data: static_field(&dir, &mn.dir_by_3d_data),
             level_set_block_and_update: mn.level_set_block_and_update.get_method_id(&level).unwrap(),
+            level_update_neighbors_for_out_signal: mn.level_update_neighbors_for_out_signal.get_method_id(&level).unwrap(),
+            level_is_client: mn.level_is_client.get_field_id(&level).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);
@@ -654,6 +708,8 @@ pub struct GregCN<T> {
     pub dyn_resource_pack: T,
     pub material_block_renderer: T,
     pub energy_container: T,
+    pub pipe_block: T,
+    pub pipe_node: T,
 }
 
 impl GregCN<Arc<CSig>> {
@@ -668,6 +724,8 @@ impl GregCN<Arc<CSig>> {
             dyn_resource_pack: b"com.gregtechceu.gtceu.data.pack.GTDynamicResourcePack",
             material_block_renderer: b"com.gregtechceu.gtceu.client.renderer.block.MaterialBlockRenderer",
             energy_container: b"com.gregtechceu.gtceu.api.capability.IEnergyContainer",
+            pipe_block: b"com.gregtechceu.gtceu.api.block.PipeBlock",
+            pipe_node: b"com.gregtechceu.gtceu.api.pipenet.IPipeNode",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -683,6 +741,9 @@ pub struct GregMN {
     pub get_input_amps: MSig,
     pub get_input_volts: MSig,
     pub get_input_eu_per_sec: MSig,
+    pub pipe_block_get_node: MSig,
+    pub pipe_block_can_connect: MSig,
+    pub pipe_node_set_connection: MSig,
 }
 
 impl GregMN {
@@ -705,6 +766,21 @@ impl GregMN {
             get_input_amps: MSig { owner: gcn.energy_container.clone(), name: cs("getInputAmperage"), sig: cs("()J") },
             get_input_volts: MSig { owner: gcn.energy_container.clone(), name: cs("getInputVoltage"), sig: cs("()J") },
             get_input_eu_per_sec: MSig { owner: gcn.energy_container.clone(), name: cs("getInputPerSec"), sig: cs("()J") },
+            pipe_block_get_node: MSig {
+                owner: gcn.pipe_block.clone(),
+                name: cs("getPipeTile"),
+                sig: msig([cn.block_getter.sig.to_bytes(), cn.block_pos.sig.to_bytes()], gcn.pipe_node.sig.to_bytes()),
+            },
+            pipe_block_can_connect: MSig {
+                owner: gcn.pipe_block.clone(),
+                name: cs("canPipeConnectToBlock"),
+                sig: msig([gcn.pipe_node.sig.to_bytes(), cn.dir.sig.to_bytes(), cn.tile.sig.to_bytes()], b"Z"),
+            },
+            pipe_node_set_connection: MSig {
+                owner: gcn.pipe_node.clone(),
+                name: cs("setConnection"),
+                sig: msig([cn.dir.sig.to_bytes(), b"ZZ"], b"V"),
+            },
         }
     }
 }
@@ -714,18 +790,27 @@ pub struct GregMV {
     pub tier_volts: GlobalRef<'static>,
     pub dyn_resource_pack_data: GlobalRef<'static>,
     pub energy_container_cap: GlobalRef<'static>,
+    pub pipe_block: GlobalRef<'static>,
+    pub pipe_block_get_node: usize,
+    pub pipe_block_can_connect: usize,
+    pub pipe_node_set_connection: usize,
 }
 
 impl GregMV {
     pub fn new(jni: &'static JNI) -> Self {
-        let GlobalObjs { av, fcn, gcn, .. } = objs();
+        let GlobalObjs { av, fcn, gcn, gmn, .. } = objs();
         let load = |csig: &Arc<CSig>| av.ldr.with_jni(jni).load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
         let values = load(&gcn.values);
+        let pipe_block = load(&gcn.pipe_block);
         Self {
             tier_names: static_field(&values, c"VN", c"[Ljava/lang/String;"),
             tier_volts: static_field(&values, c"V", c"[J"),
             dyn_resource_pack_data: static_field(&load(&gcn.dyn_resource_pack), c"DATA", c"Ljava/util/concurrent/ConcurrentMap;"),
             energy_container_cap: static_field(&load(&gcn.caps), c"CAPABILITY_ENERGY_CONTAINER", &fcn.cap.sig),
+            pipe_block_get_node: gmn.pipe_block_get_node.get_method_id(&pipe_block).unwrap(),
+            pipe_block_can_connect: gmn.pipe_block_can_connect.get_method_id(&pipe_block).unwrap(),
+            pipe_node_set_connection: gmn.pipe_node_set_connection.get_method_id(&load(&gcn.pipe_node)).unwrap(),
+            pipe_block,
         }
     }
 }

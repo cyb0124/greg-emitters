@@ -31,6 +31,7 @@ pub struct GlobalObjs {
     pub fmv: ForgeMV,
     pub gcn: GregCN<Arc<CSig>>,
     pub gmn: GregMN,
+    pub gmv: OnceCell<GregMV>,
     pub namer: ClassNamer,
     pub writer_cls: GlobalRef<'static>,
     pub cleaner: Cleaner,
@@ -52,7 +53,6 @@ pub struct Tier {
 
 #[derive(Default)]
 pub struct GlobalMtx {
-    pub gmv: OnceCell<GregMV>,
     pub sheets_solid: OnceCell<GlobalRef<'static>>,
     pub wire_sprite: Option<Sprite>,
     pub emitter_items: OnceCell<EmitterItems>,
@@ -107,6 +107,7 @@ impl GlobalObjs {
             tile_utils: TileUtils::new(&av, &cn, &mn, &namer),
             cleaner: Cleaner::new(&av, &namer),
             gmn: GregMN::new(&cn, &gcn),
+            gmv: OnceCell::new(),
             namer,
             fcn,
             fmn,
@@ -144,7 +145,7 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
     let tier = str::from_utf8(&name[..name.len() - suffix.len()]).unwrap();
     let mut lk = objs().mtx.lock(jni).unwrap();
     let lk = &mut *lk;
-    lk.gmv.get_or_init(|| {
+    objs().gmv.get_or_init(|| {
         let gmv = GregMV::new(jni);
         let tier_volts = gmv.tier_volts.long_elems().unwrap();
         lk.tiers.reserve_exact(tier_volts.len());
@@ -177,9 +178,8 @@ fn greg_creative_tab_stub(jni: &'static JNI, _: usize, item: usize) -> bool {
 
 #[dyn_abi]
 fn greg_reinit_models_stub(jni: &JNI, _: usize) {
-    let lk = objs().mtx.lock(jni).unwrap();
-    let gmv = lk.gmv.get().unwrap();
-    for tier in &lk.tiers {
+    let gmv = objs().gmv.get().unwrap();
+    for tier in &objs().mtx.lock(jni).unwrap().tiers {
         let true = tier.has_emitter else { continue };
         let id = format!("blockstates/{EMITTER_ID}_{}.json", tier.name);
         let json = format!("{{\"variants\":{{\"\":{{\"model\":\"gtceu:item/{}_emitter\"}}}}}}", tier.name);
