@@ -56,12 +56,11 @@ pub fn forge_reg<'a>(evt: &impl JRef<'a>, id: &str, value: usize) {
 #[dyn_abi]
 fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
     let GlobalObjs { fmv, av, mtx, .. } = objs();
-    let mut lk = mtx.lock(jni).unwrap();
-    let lk = &mut *lk;
+    let lk = mtx.lock(jni).unwrap();
     let evt = BorrowedRef::new(jni, &evt);
     let key = evt.call_object_method(fmv.reg_evt_key, &[]).unwrap().unwrap();
     if key.equals(&av.jv, fmv.reg_key_blocks.raw).unwrap() {
-        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &mut lk.tiers, &evt));
+        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &lk.tiers.borrow(), &evt));
     } else if key.equals(&av.jv, fmv.reg_key_tile_types.raw).unwrap() {
         forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
     }
@@ -84,14 +83,14 @@ fn on_forge_atlas(jni: &'static JNI, _: usize, evt: usize) {
     let atlas = evt.call_object_method(fmv.client.uref().atlas_evt_get_atlas, &[]).unwrap().unwrap();
     let loc = atlas.call_object_method(mvc.atlas_loc, &[]).unwrap().unwrap();
     if loc.equals(&av.jv, mvc.atlas_loc_blocks.raw).unwrap() {
-        let mut lk = mtx.lock(jni).unwrap();
+        let lk = mtx.lock(jni).unwrap();
         lk.sheets_solid.get_or_init(|| {
             let sheets = av.ldr.with_jni(atlas.jni()).load_class(&av.jv, &cn.sheets.dot).unwrap();
             let sheets_solid = mn.sheets_solid.get_static_method_id(&sheets).unwrap();
             sheets.call_static_object_method(sheets_solid, &[]).unwrap().unwrap().new_global_ref().unwrap()
         });
-        lk.wire_sprite = Some(Sprite::new(&atlas, c"gtceu", c"block/cable/wire"));
-        for tier in &mut lk.tiers {
+        lk.wire_sprite.set(Some(Sprite::new(&atlas, c"gtceu", c"block/cable/wire")));
+        for tier in &mut *lk.tiers.borrow_mut() {
             tier.emitter_sprite = Some(Sprite::new(&atlas, c"gtceu", &cs(format!("item/{}_emitter", tier.name))))
         }
     }

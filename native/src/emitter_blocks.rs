@@ -35,7 +35,7 @@ pub struct EmitterBlocks {
 }
 
 impl EmitterBlocks {
-    pub fn init(jni: &'static JNI, tiers: &mut [Tier], reg_evt: &impl JRef<'static>) -> Self {
+    pub fn init(jni: &'static JNI, tiers: &[Tier], reg_evt: &impl JRef<'static>) -> Self {
         // Tile
         let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, namer, tile_utils, .. } = objs();
         let mut name = namer.next();
@@ -105,7 +105,7 @@ impl EmitterBlocks {
         props = props.call_object_method(mv.block_beh_props_sound, &[mv.sound_type_metal.raw]).unwrap().unwrap();
         let n_emitter_tiers = tiers.iter().filter(|x| x.has_emitter).count();
         let mut blocks = cls.new_object_array(n_emitter_tiers as _, 0).unwrap();
-        for (block_i, (tier_i, tier)) in tiers.iter_mut().enumerate().filter(|(_, x)| x.has_emitter).enumerate() {
+        for (block_i, (tier_i, tier)) in tiers.iter().enumerate().filter(|(_, x)| x.has_emitter).enumerate() {
             let true = tier.has_emitter else { continue };
             let block = cls.new_object(mv.base_tile_block_init, &[props.raw]).unwrap();
             blocks.set_object_elem(block_i as _, block.raw).unwrap();
@@ -158,9 +158,9 @@ impl EmitterBlocks {
 fn get_drops(jni: &JNI, this: usize, _state: usize, _loot_builder: usize) -> usize {
     let GlobalObjs { mtx, av, mv, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.get().unwrap();
-    let tier = BorrowedRef::new(jni, &this).get_byte_field(defs.block_tier);
-    let item = lk.tiers[tier as usize].emitter_item.get().unwrap();
+    let tiers = lk.tiers.borrow();
+    let tier = BorrowedRef::new(jni, &this).get_byte_field(lk.emitter_blocks.get().unwrap().block_tier);
+    let item = tiers[tier as usize].emitter_item.get().unwrap();
     let stack = mv.item_stack.with_jni(jni).new_object(mv.item_stack_init, &[item.raw, 1, 0]).unwrap();
     mv.item_stack.with_jni(jni).new_object_array(1, stack.raw).unwrap().array_as_list(&av.jv).unwrap().into_raw()
 }
@@ -196,7 +196,7 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
     const LEG_LEN: f32 = 0.3;
     const LEG_DIA: f32 = 0.05;
     const LEG_POS: f32 = RADIUS * 0.6;
-    let greg_wire = lk.wire_sprite.uref();
+    let greg_wire = lk.wire_sprite.get().unwrap();
     let leg_side = greg_wire.sub(0., 0., LEG_DIA, LEG_LEN);
     let leg_bot = greg_wire.sub(0., 0., LEG_DIA, LEG_DIA);
     for x in [-LEG_POS, LEG_POS] {
@@ -223,7 +223,7 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
     let mut n0: [_; 4] = array::from_fn(|i| (p0.get(i + 1).unwrap_or(&top_p) - p0[i]).cross(&vector![-base.y, 0., base.x]).normalize());
     let mut m0 = n0.map(|n| tf * n);
     let rot = UnitQuaternion::from_euler_angles(0., TAU / N_SEGS as f32, 0.);
-    let spr = lk.tiers[emitter.tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
+    let spr = lk.tiers.borrow()[emitter.tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
     for _ in 0..N_SEGS / 2 {
         let (p1, n1) = (p0.map(|p| rot * p), n0.map(|n| rot * n));
         let (p2, n2) = (p1.map(|p| rot * p), n1.map(|n| rot * n));
@@ -260,10 +260,10 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
 
 #[dyn_abi]
 fn get_cap(jni: &JNI, this: usize, cap: usize, side: usize) -> usize {
-    let GlobalObjs { fmv, mtx, gmv, .. } = objs();
+    let GlobalObjs { fmv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let this = BorrowedRef::new(jni, &this);
-    if BorrowedRef::new(jni, &cap).is_same_object(gmv.get().unwrap().energy_container_cap.raw) {
+    if BorrowedRef::new(jni, &cap).is_same_object(lk.gmv.get().unwrap().energy_container_cap.raw) {
         this.get_object_field(lk.emitter_blocks.get().unwrap().tile_energy_container_cap).unwrap().into_raw()
     } else {
         this.call_nonvirtual_object_method(fmv.cap_provider.raw, fmv.get_cap, &[cap, side]).unwrap().unwrap().into_raw()
@@ -288,13 +288,15 @@ fn get_eu_stored(jni: &JNI, this: usize) -> i64 {
 #[dyn_abi]
 fn get_eu_capacity(jni: &JNI, this: usize) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
-    lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).eu_capacity(&lk.tiers)
+    let result = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).eu_capacity(&lk.tiers.borrow());
+    result
 }
 
 #[dyn_abi]
 fn get_input_volts(jni: &JNI, this: usize) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
-    lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).volts(&lk.tiers)
+    let result = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).volts(&lk.tiers.borrow());
+    result
 }
 
 #[dyn_abi]
@@ -317,7 +319,8 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
     if in_side != 0 && Some(read_dir(&BorrowedRef::new(jni, &in_side)) ^ 1) != emitter.common.borrow().dir {
         return 0;
     }
-    if volts > emitter.volts(&lk.tiers) {
+    let tiers = lk.tiers.borrow();
+    if volts > emitter.volts(&tiers) {
         let level = this.get_object_field(mv.tile_level).unwrap();
         let pos = this.get_object_field(mv.tile_pos).unwrap();
         let state = mv.blocks_fire.with_jni(jni).call_object_method(mv.block_default_state, &[]).unwrap().unwrap();
@@ -325,7 +328,7 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
         return 1;
     }
     let mut data = emitter.server.borrow_mut();
-    if data.energy + volts > emitter.eu_capacity(&lk.tiers) {
+    if data.energy + volts > emitter.eu_capacity(&tiers) {
         return 0;
     }
     data.energy += volts;
@@ -338,7 +341,7 @@ fn change_eu(jni: &JNI, this: usize, delta: i64) -> i64 {
     let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this));
     let mut data = emitter.server.borrow_mut();
     let base = data.energy;
-    data.energy = (base + delta).clamp(0, emitter.eu_capacity(&lk.tiers));
+    data.energy = (base + delta).clamp(0, emitter.eu_capacity(&lk.tiers.borrow()));
     data.energy - base
 }
 

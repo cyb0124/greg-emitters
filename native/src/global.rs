@@ -14,7 +14,7 @@ use crate::{
 };
 use alloc::{format, sync::Arc, vec::Vec};
 use core::{
-    cell::OnceCell,
+    cell::{Cell, OnceCell, RefCell},
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -31,7 +31,6 @@ pub struct GlobalObjs {
     pub fmv: ForgeMV,
     pub gcn: GregCN<Arc<CSig>>,
     pub gmn: GregMN,
-    pub gmv: OnceCell<GregMV>,
     pub namer: ClassNamer,
     pub writer_cls: GlobalRef<'static>,
     pub cleaner: Cleaner,
@@ -53,12 +52,13 @@ pub struct Tier {
 
 #[derive(Default)]
 pub struct GlobalMtx {
+    pub gmv: OnceCell<GregMV>,
     pub sheets_solid: OnceCell<GlobalRef<'static>>,
-    pub wire_sprite: Option<Sprite>,
+    pub wire_sprite: Cell<Option<Sprite>>,
     pub emitter_items: OnceCell<EmitterItems>,
     pub emitter_blocks: OnceCell<EmitterBlocks>,
-    pub tier_lookup: HashMap<Arc<str>, u8>,
-    pub tiers: Vec<Tier>,
+    pub tier_lookup: RefCell<HashMap<Arc<str>, u8>>,
+    pub tiers: RefCell<Vec<Tier>>,
 }
 
 impl GlobalObjs {
@@ -107,7 +107,6 @@ impl GlobalObjs {
             tile_utils: TileUtils::new(&av, &cn, &mn, &namer),
             cleaner: Cleaner::new(&av, &namer),
             gmn: GregMN::new(&cn, &gcn),
-            gmv: OnceCell::new(),
             namer,
             fcn,
             fmn,
@@ -143,30 +142,24 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
     let suffix = b"_emitter";
     let true = name.ends_with(suffix) else { return 0 };
     let tier = str::from_utf8(&name[..name.len() - suffix.len()]).unwrap();
-    let mut lk = objs().mtx.lock(jni).unwrap();
-    let lk = &mut *lk;
-    objs().gmv.get_or_init(|| {
+    let lk = objs().mtx.lock(jni).unwrap();
+    lk.gmv.get_or_init(|| {
         let gmv = GregMV::new(jni);
         let tier_volts = gmv.tier_volts.long_elems().unwrap();
-        lk.tiers.reserve_exact(tier_volts.len());
+        let mut tiers = lk.tiers.borrow_mut();
+        let mut lookup = lk.tier_lookup.borrow_mut();
+        tiers.reserve_exact(tier_volts.len());
         for (tier, &volt) in tier_volts.iter().enumerate() {
             let name = gmv.tier_names.get_object_elem(tier as _).unwrap().unwrap();
             let name = Arc::<str>::from(str::from_utf8(&*name.utf_chars().unwrap()).unwrap().to_lowercase());
-            lk.tier_lookup.insert(name.clone(), tier as _);
-            lk.tiers.push(Tier {
-                volt,
-                name,
-                has_emitter: false,
-                emitter_sprite: None,
-                emitter_block: OnceCell::new(),
-                emitter_item: OnceCell::new(),
-            })
+            lookup.insert(name.clone(), tier as _);
+            tiers.push(Tier { volt, name, has_emitter: false, emitter_sprite: None, emitter_block: OnceCell::new(), emitter_item: OnceCell::new() })
         }
         drop(tier_volts);
         gmv
     });
-    let &tier = lk.tier_lookup.get(tier).unwrap();
-    lk.tiers[tier as usize].has_emitter = true;
+    let &tier = lk.tier_lookup.borrow().get(tier).unwrap();
+    lk.tiers.borrow_mut()[tier as usize].has_emitter = true;
     lk.emitter_items.get_or_init(|| EmitterItems::new(jni)).make_item_maker(jni, tier).into_raw()
 }
 
@@ -178,11 +171,11 @@ fn greg_creative_tab_stub(jni: &'static JNI, _: usize, item: usize) -> bool {
 
 #[dyn_abi]
 fn greg_reinit_models_stub(jni: &JNI, _: usize) {
-    let gmv = objs().gmv.get().unwrap();
-    for tier in &objs().mtx.lock(jni).unwrap().tiers {
+    let lk = objs().mtx.lock(jni).unwrap();
+    for tier in &*lk.tiers.borrow() {
         let true = tier.has_emitter else { continue };
         let id = format!("blockstates/{EMITTER_ID}_{}.json", tier.name);
         let json = format!("{{\"variants\":{{\"\":{{\"model\":\"gtceu:item/{}_emitter\"}}}}}}", tier.name);
-        add_greg_dyn_resource(jni, gmv, id, &json)
+        add_greg_dyn_resource(jni, lk.gmv.get().unwrap(), id, &json)
     }
 }

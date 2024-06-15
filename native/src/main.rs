@@ -62,7 +62,10 @@ struct GlobalJVM {
     ti: &'static JVMTI,
 }
 
-struct GlobalEnv {
+struct GlobalEnv
+where
+    GlobalObjs: Sync,
+{
     #[cfg(target_arch = "x86_64")]
     is_win: bool,
     jvm: Option<GlobalJVM>,
@@ -79,7 +82,6 @@ static mut ENV: GlobalEnv = GlobalEnv {
 
 fn ti() -> &'static JVMTI { unsafe { ENV.jvm.as_ref().unwrap_unchecked().ti } }
 fn objs() -> &'static GlobalObjs { unsafe { ENV.objs.as_ref().unwrap_unchecked() } }
-unsafe impl Sync for GlobalEnv {}
 unsafe impl GlobalAlloc for GlobalEnv {
     unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) { ti().deallocate(ptr).unwrap() }
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {

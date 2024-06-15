@@ -57,11 +57,10 @@ fn get_desc_id(jni: &JNI, this: usize) -> usize {
 
 #[dyn_abi]
 fn make_item(jni: &'static JNI, this: usize, props: usize) -> usize {
-    let mut lk = objs().mtx.lock(jni).unwrap();
-    let lk = &mut *lk;
+    let lk = objs().mtx.lock(jni).unwrap();
     let defs = lk.emitter_items.get().unwrap();
-    let tier = BorrowedRef::new(jni, &this).get_byte_field(defs.item_maker_tier);
-    let tier = &mut lk.tiers[tier as usize];
+    let tiers = lk.tiers.borrow();
+    let tier = &tiers[BorrowedRef::new(jni, &this).get_byte_field(defs.item_maker_tier) as usize];
     let item = defs.item.with_jni(jni).new_object(objs().mv.block_item_init, &[tier.emitter_block.get().unwrap().raw, props]).unwrap();
     tier.emitter_item.set(item.new_global_ref().unwrap()).ok().unwrap();
     item.into_raw()
@@ -69,7 +68,7 @@ fn make_item(jni: &'static JNI, this: usize, props: usize) -> usize {
 
 #[dyn_abi]
 fn place_block(jni: &'static JNI, this: usize, ctx: usize, state: usize) -> bool {
-    let GlobalObjs { mtx, mv, gmv, .. } = objs();
+    let GlobalObjs { mtx, mv, .. } = objs();
     if !BorrowedRef::new(jni, &this).call_nonvirtual_bool_method(mv.block_item.raw, mv.block_item_place_block, &[ctx, state]).unwrap() {
         return false;
     }
@@ -82,12 +81,13 @@ fn place_block(jni: &'static JNI, this: usize, ctx: usize, state: usize) -> bool
     let dir_obj = ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap();
     let mut dir = read_dir(&dir_obj);
     let tile = level.call_object_method(mv.block_getter_get_tile, &[pos.raw]).unwrap().unwrap();
-    mtx.lock(jni).unwrap().emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir);
+    let lk = mtx.lock(jni).unwrap();
+    lk.emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir);
     dir ^= 1;
     pos = write_block_pos(jni, read_vec3i(&pos) + DIR_STEPS[dir as usize]);
     let mut pipe_block = level.call_object_method(mv.block_getter_get_block_state, &[pos.raw]).unwrap().unwrap();
     pipe_block = pipe_block.call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
-    let gmv = gmv.get().unwrap();
+    let gmv = lk.gmv.get().unwrap();
     if !pipe_block.is_instance_of(gmv.pipe_block.raw) {
         return true;
     }

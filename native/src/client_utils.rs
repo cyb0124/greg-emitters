@@ -10,6 +10,7 @@ pub fn read_pose<'a>(pose_stack: &impl JRef<'a>) -> Affine3<f32> {
     Affine3::from_matrix_unchecked(Matrix4::from_data(unsafe { pose_data.assume_init() }))
 }
 
+#[derive(Clone, Copy)]
 pub struct Sprite {
     pub uv0: Point2<f32>,
     pub uv1: Point2<f32>,
