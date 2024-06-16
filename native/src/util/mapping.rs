@@ -1,7 +1,6 @@
-use crate::{asm::*, global::GlobalObjs, jvm::*, mapping_base::*, objs};
+use crate::{asm::*, global::GlobalObjs, jvm::*, mapping_base::*, objs, util::BaseExt};
 use alloc::{sync::Arc, vec::Vec};
 use bstr::B;
-use core::ffi::CStr;
 use mapping_macros::Functor;
 
 #[derive(Functor)]
@@ -76,6 +75,7 @@ pub struct ForgeMV {
     pub evt_bus_add_listener: usize,
     pub reg_key_blocks: GlobalRef<'static>,
     pub reg_key_tile_types: GlobalRef<'static>,
+    pub reg_key_menu_types: GlobalRef<'static>,
     pub reg_evt_key: usize,
     pub reg_evt_forge_reg: usize,
     pub forge_reg_reg: usize,
@@ -91,10 +91,6 @@ pub struct ForgeMV {
 pub struct ForgeMVC {
     pub renderers_evt_reg: usize,
     pub atlas_evt_get_atlas: usize,
-}
-
-fn static_field<'a>(cv: &GlobalRef<'a>, name: &CStr, sig: &CStr) -> GlobalRef<'a> {
-    cv.get_static_object_field(cv.get_static_field_id(name, sig).unwrap()).unwrap().new_global_ref().unwrap()
 }
 
 impl ForgeMV {
@@ -115,18 +111,19 @@ impl ForgeMV {
         let reg_evt = load(&fcn.reg_evt);
         let lazy_opt = load(&fcn.lazy_opt);
         let cap_provider = load(&fcn.cap_provider);
-        let dist = static_field(&fml, c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
+        let dist = fml.static_field_1(c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
         let is_client = dist.call_bool_method(dist.get_object_class().get_method_id(c"isClient", c"()Z").unwrap(), &[]).unwrap();
         Self {
-            cml_inst: static_field(&cml, c"INSTANCE", &fcn.cml.sig),
+            cml_inst: cml.static_field_1(c"INSTANCE", &fcn.cml.sig),
             cml_get_mapper: cml.get_method_id(c"findNameMapping", c"(Ljava/lang/String;)Ljava/util/Optional;").unwrap(),
-            naming_domain_f: static_field(&naming_domain, c"FIELD", &fcn.naming_domain.sig),
-            naming_domain_m: static_field(&naming_domain, c"METHOD", &fcn.naming_domain.sig),
+            naming_domain_f: naming_domain.static_field_1(c"FIELD", &fcn.naming_domain.sig),
+            naming_domain_m: naming_domain.static_field_1(c"METHOD", &fcn.naming_domain.sig),
             fml_naming_is_srg,
             mod_evt_bus,
             evt_bus_add_listener: evt_bus.get_method_id(c"addListener", c"(Ljava/util/function/Consumer;)V").unwrap(),
-            reg_key_blocks: static_field(&reg_keys, c"BLOCKS", &cn.resource_key.sig),
-            reg_key_tile_types: static_field(&reg_keys, c"BLOCK_ENTITY_TYPES", &cn.resource_key.sig),
+            reg_key_blocks: reg_keys.static_field_1(c"BLOCKS", &cn.resource_key.sig),
+            reg_key_tile_types: reg_keys.static_field_1(c"BLOCK_ENTITY_TYPES", &cn.resource_key.sig),
+            reg_key_menu_types: reg_keys.static_field_1(c"MENU_TYPES", &cn.resource_key.sig),
             reg_evt_key: reg_evt.get_method_id(c"getRegistryKey", &msig([], cn.resource_key.sig.to_bytes())).unwrap(),
             reg_evt_forge_reg: reg_evt.get_method_id(c"getForgeRegistry", &msig([], fcn.forge_reg.sig.to_bytes())).unwrap(),
             forge_reg_reg: load(&fcn.forge_reg).get_method_id(c"register", c"(Ljava/lang/String;Ljava/lang/Object;)V").unwrap(),
@@ -599,7 +596,6 @@ pub struct MVC {
 impl MV {
     pub fn new(av: &AV<'static>, cn: &CN<Arc<CSig>>, mn: &MN<MSig>, is_client: bool) -> MV {
         let load = |csig: &Arc<CSig>| av.ldr.load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
-        let static_field = |cv: &GlobalRef<'static>, mn: &MSig| static_field(cv, &mn.name, &mn.sig);
         let base_tile_block = load(&cn.base_tile_block);
         let block = load(&cn.block);
         let block_beh_props = load(&cn.block_beh_props);
@@ -639,7 +635,7 @@ impl MV {
             block_pos_init: mn.block_pos_init.get_method_id(&block_pos).unwrap(),
             block_pos,
             block_state_get_block: mn.block_state_get_block.get_method_id(&block_state).unwrap(),
-            blocks_fire: static_field(&load(&cn.blocks), &mn.blocks_fire),
+            blocks_fire: load(&cn.blocks).static_field_2(&mn.blocks_fire),
             tile_type_init: mn.tile_type_init.get_method_id(&tile_type).unwrap(),
             tile_type,
             tile_init: mn.tile_init.get_method_id(&tile).unwrap(),
@@ -648,12 +644,12 @@ impl MV {
             tile_level: mn.tile_level.get_field_id(&tile).unwrap(),
             tile_pos: mn.tile_pos.get_field_id(&tile).unwrap(),
             tile,
-            sound_type_metal: static_field(&sound_type, &mn.sound_type_metal),
+            sound_type_metal: sound_type.static_field_2(&mn.sound_type_metal),
             item_get_desc_id: mn.item_get_desc_id.get_method_id(&item).unwrap(),
             item,
             item_stack_init: mn.item_stack_init.get_method_id(&item_stack).unwrap(),
             item_stack,
-            render_shape_tile: static_field(&render_shape, &mn.render_shape_tile),
+            render_shape_tile: render_shape.static_field_2(&mn.render_shape_tile),
             resource_loc_init: mn.resource_loc_init.get_method_id(&resource_loc).unwrap(),
             resource_loc,
             shapes_create: mn.shapes_create.get_static_method_id(&shapes).unwrap(),
@@ -666,7 +662,7 @@ impl MV {
             use_on_ctx_get_clicked_pos: mn.use_on_ctx_get_clicked_pos.get_method_id(&use_on_ctx).unwrap(),
             use_on_ctx_get_clicked_face: mn.use_on_ctx_get_clicked_face.get_method_id(&use_on_ctx).unwrap(),
             dir_3d_data: mn.dir_3d_data.get_field_id(&dir).unwrap(),
-            dir_by_3d_data: static_field(&dir, &mn.dir_by_3d_data),
+            dir_by_3d_data: dir.static_field_2(&mn.dir_by_3d_data),
             level_set_block_and_update: mn.level_set_block_and_update.get_method_id(&level).unwrap(),
             level_update_neighbors_for_out_signal: mn.level_update_neighbors_for_out_signal.get_method_id(&level).unwrap(),
             level_is_client: mn.level_is_client.get_field_id(&level).unwrap(),
@@ -683,7 +679,7 @@ impl MV {
                     pose_stack_last: mn.pose_stack_last.get_method_id(&pose_stack).unwrap(),
                     matrix4fc_read: mn.matrix4fc_read.get_method_id(&matrix4fc).unwrap(),
                     atlas_loc: mn.atlas_loc.get_method_id(&atlas).unwrap(),
-                    atlas_loc_blocks: static_field(&atlas, &mn.atlas_loc_blocks),
+                    atlas_loc_blocks: atlas.static_field_2(&mn.atlas_loc_blocks),
                     atlas_get_sprite: mn.atlas_get_sprite.get_method_id(&atlas).unwrap(),
                     sprite_u0: mn.sprite_u0.get_field_id(&sprite).unwrap(),
                     sprite_v0: mn.sprite_v0.get_field_id(&sprite).unwrap(),
@@ -803,10 +799,10 @@ impl GregMV {
         let values = load(&gcn.values);
         let pipe_block = load(&gcn.pipe_block);
         Self {
-            tier_names: static_field(&values, c"VN", c"[Ljava/lang/String;"),
-            tier_volts: static_field(&values, c"V", c"[J"),
-            dyn_resource_pack_data: static_field(&load(&gcn.dyn_resource_pack), c"DATA", c"Ljava/util/concurrent/ConcurrentMap;"),
-            energy_container_cap: static_field(&load(&gcn.caps), c"CAPABILITY_ENERGY_CONTAINER", &fcn.cap.sig),
+            tier_names: values.static_field_1(c"VN", c"[Ljava/lang/String;"),
+            tier_volts: values.static_field_1(c"V", c"[J"),
+            dyn_resource_pack_data: load(&gcn.dyn_resource_pack).static_field_1(c"DATA", c"Ljava/util/concurrent/ConcurrentMap;"),
+            energy_container_cap: load(&gcn.caps).static_field_1(c"CAPABILITY_ENERGY_CONTAINER", &fcn.cap.sig),
             pipe_block_get_node: gmn.pipe_block_get_node.get_method_id(&pipe_block).unwrap(),
             pipe_block_can_connect: gmn.pipe_block_can_connect.get_method_id(&pipe_block).unwrap(),
             pipe_node_set_connection: gmn.pipe_node_set_connection.get_method_id(&load(&gcn.pipe_node)).unwrap(),

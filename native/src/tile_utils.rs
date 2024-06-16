@@ -1,10 +1,13 @@
 use crate::{
     asm::*,
-    global::{ClassNamer, GlobalObjs},
+    global::GlobalObjs,
     jvm::*,
-    mapping::{CN, MN},
     mapping_base::*,
     objs,
+    util::{
+        mapping::{CN, MN},
+        ClassNamer,
+    },
 };
 use alloc::{format, sync::Arc};
 use core::{ffi::CStr, mem::transmute};

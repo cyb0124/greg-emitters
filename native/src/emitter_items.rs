@@ -1,10 +1,10 @@
 use crate::{
     asm::*,
-    geometry::{read_dir, read_vec3i, write_block_pos, write_dir, DIR_STEPS},
     global::GlobalObjs,
     jvm::*,
     mapping_base::*,
     objs,
+    util::geometry::{write_block_pos, write_dir, GeomExt, DIR_STEPS},
 };
 use macros::dyn_abi;
 
@@ -79,12 +79,12 @@ fn place_block(jni: &'static JNI, this: usize, ctx: usize, state: usize) -> bool
     }
     let mut pos = ctx.call_object_method(mv.use_on_ctx_get_clicked_pos, &[]).unwrap().unwrap();
     let dir_obj = ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap();
-    let mut dir = read_dir(&dir_obj);
+    let mut dir = dir_obj.read_dir();
     let tile = level.call_object_method(mv.block_getter_get_tile, &[pos.raw]).unwrap().unwrap();
     let lk = mtx.lock(jni).unwrap();
     lk.emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir);
     dir ^= 1;
-    pos = write_block_pos(jni, read_vec3i(&pos) + DIR_STEPS[dir as usize]);
+    pos = write_block_pos(jni, pos.read_vec3i() + DIR_STEPS[dir as usize]);
     let mut pipe_block = level.call_object_method(mv.block_getter_get_block_state, &[pos.raw]).unwrap().unwrap();
     pipe_block = pipe_block.call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
     let gmv = lk.gmv.get().unwrap();

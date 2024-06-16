@@ -23,17 +23,14 @@ macro_rules! dyn_abi {
 }
 
 pub mod asm;
-mod cleaner;
-mod client_utils;
 mod emitter_blocks;
 mod emitter_items;
-mod geometry;
 mod global;
 pub mod jvm;
-mod mapping;
 pub mod mapping_base;
 mod registry;
 mod tile_utils;
+mod util;
 
 extern crate alloc;
 use alloc::{ffi::CString, format};

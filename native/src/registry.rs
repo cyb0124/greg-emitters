@@ -1,4 +1,5 @@
-use crate::{asm::*, client_utils::Sprite, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping::GregMV, mapping_base::*, objs, ti};
+use crate::util::{client::Sprite, mapping::GregMV};
+use crate::{asm::*, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping_base::*, objs, ti};
 use alloc::{format, vec::Vec};
 use core::ffi::{c_char, CStr};
 use macros::dyn_abi;

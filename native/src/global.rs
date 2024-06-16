@@ -1,22 +1,24 @@
 use crate::{
     asm::*,
-    cleaner::Cleaner,
-    client_utils::Sprite,
     emitter_blocks::EmitterBlocks,
     emitter_items::EmitterItems,
     jvm::*,
-    mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
     mapping_base::*,
     objs,
-    registry::{add_greg_dyn_resource, EMITTER_ID, MOD_ID},
+    registry::{add_greg_dyn_resource, EMITTER_ID},
     ti,
     tile_utils::TileUtils,
+    util::{
+        cleaner::Cleaner,
+        client::Sprite,
+        mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
+        ClassNamer,
+    },
 };
 use alloc::{format, sync::Arc, vec::Vec};
 use core::{
     cell::{Cell, OnceCell, RefCell},
     str,
-    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
 use macros::dyn_abi;
@@ -66,7 +68,7 @@ impl GlobalObjs {
         let jv = JV::new(cls.jni).unwrap();
         let ldr = ti().with_jni(cls.jni).get_class_loader(cls.raw).unwrap().unwrap();
         let av = AV::new(ldr.new_global_ref().unwrap(), jv).unwrap();
-        let namer = ClassNamer { next: 0.into() };
+        let namer = ClassNamer::default();
         let cn = CN::new();
         let fcn = ForgeCN::new();
         let fmn = ForgeMN::new(&cn, &fcn);
@@ -121,17 +123,6 @@ impl GlobalObjs {
             greg_creative_tab_stub,
             greg_reinit_models_stub,
         }
-    }
-}
-
-pub struct ClassNamer {
-    next: AtomicUsize,
-}
-
-impl ClassNamer {
-    pub fn next(&self) -> Arc<CSig> {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
-        CSig::new(&format!("cyb0124/{MOD_ID}/{id}").as_bytes()).into()
     }
 }
 

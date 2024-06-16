@@ -1,14 +1,14 @@
 use crate::{
     asm::*,
-    cleaner::Cleanable,
-    client_utils::{read_pose, DrawContext},
-    geometry::{lerp, new_voxel_shape, read_dir, DIR_ATTS},
     global::{GlobalObjs, Tier},
     jvm::*,
     mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
     tile_utils::{const_long_impl, non_null_supplier_get_self_impl, read_tag, tile_get_update_packet_impl, write_tag, TAG_COMMON, TAG_SERVER},
+    util::cleaner::Cleanable,
+    util::client::{ClientExt, DrawContext},
+    util::geometry::{lerp, new_voxel_shape, GeomExt, DIR_ATTS},
 };
 use alloc::{format, sync::Arc};
 use core::{
@@ -191,7 +191,7 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
     let common = emitter.common.borrow();
     let Some(dir) = common.dir else { return };
     let mut dc = DrawContext::new(&*lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
-    let tf = read_pose(&BorrowedRef::new(jni, &pose_stack)) * Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
+    let tf = BorrowedRef::new(jni, &pose_stack).last_pose() * Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
     // Legs
     const LEG_LEN: f32 = 0.3;
     const LEG_DIA: f32 = 0.05;
@@ -303,7 +303,7 @@ fn get_input_volts(jni: &JNI, this: usize) -> i64 {
 fn can_input_eu_from_side(jni: &JNI, this: usize, in_side: usize) -> bool {
     let lk = objs().mtx.lock(jni).unwrap();
     let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this));
-    let result = Some(read_dir(&BorrowedRef::new(jni, &in_side)) ^ 1) == emitter.common.borrow().dir;
+    let result = Some(BorrowedRef::new(jni, &in_side).read_dir() ^ 1) == emitter.common.borrow().dir;
     result
 }
 
@@ -316,7 +316,7 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
     let lk = mtx.lock(jni).unwrap();
     let this = BorrowedRef::new(jni, &this);
     let emitter = lk.emitter_blocks.get().unwrap().from_tile(&this);
-    if in_side != 0 && Some(read_dir(&BorrowedRef::new(jni, &in_side)) ^ 1) != emitter.common.borrow().dir {
+    if in_side != 0 && Some(BorrowedRef::new(jni, &in_side).read_dir() ^ 1) != emitter.common.borrow().dir {
         return 0;
     }
     let tiers = lk.tiers.borrow();
