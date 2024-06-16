@@ -151,7 +151,7 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
     });
     let &tier = lk.tier_lookup.borrow().get(tier).unwrap();
     lk.tiers.borrow_mut()[tier as usize].has_emitter = true;
-    lk.emitter_items.get_or_init(|| EmitterItems::new(jni)).make_item_maker(jni, tier).into_raw()
+    lk.emitter_items.get_or_init(|| EmitterItems::new(jni)).new_item_factory(jni, tier).into_raw()
 }
 
 #[dyn_abi]

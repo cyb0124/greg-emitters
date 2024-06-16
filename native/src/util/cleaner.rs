@@ -27,14 +27,16 @@ impl Cleaner {
         Self { cleaner, reg, task }
     }
 
-    pub fn reg<'a>(&self, obj: &impl JRef<'a>, share: Arc<dyn Cleanable>) {
-        let task = self.task.new_obj(obj.jni(), unsafe { transmute(share) });
+    pub fn reg<'a>(&self, obj: &impl JRef<'a>, data: Arc<dyn Cleanable>) {
+        let (ptr, meta) = Arc::into_raw(data).to_raw_parts();
+        let task = self.task.new_obj(obj.jni(), [ptr as _, unsafe { transmute(meta) }]);
         self.cleaner.with_jni(task.jni).call_object_method(self.reg, &[obj.raw(), task.raw]).unwrap();
     }
 }
 
 #[dyn_abi]
 fn task_run(jni: &JNI, task: usize) {
-    let share: Arc<dyn Cleanable> = unsafe { transmute(objs().cleaner.task.read(&BorrowedRef::new(jni, &task))) };
-    share.free(jni)
+    let [ptr, meta] = objs().cleaner.task.read(&BorrowedRef::new(jni, &task));
+    let data: *const dyn Cleanable = core::ptr::from_raw_parts(ptr as _, unsafe { transmute(meta) });
+    unsafe { Arc::from_raw(data) }.free(jni)
 }

@@ -15,8 +15,8 @@ use crate::{
 use alloc::{format, sync::Arc, vec::Vec};
 use core::{
     ffi::CStr,
-    marker::PhantomData,
-    mem::transmute,
+    marker::{PhantomData, Unsize},
+    mem::transmute_copy,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -40,6 +40,35 @@ impl ClassNamer {
     }
 }
 
+pub struct ThinClass {
+    cls: GlobalRef<'static>,
+    p: usize,
+}
+
+impl ThinClass {
+    pub fn wrap<T: Cleanable + 'static>(self) -> ThinWrapper<T> { ThinWrapper { cls: self, _p: PhantomData } }
+    pub fn read<'a>(&self, obj: &impl JRef<'a>) -> i64 { obj.get_long_field(self.p) }
+    pub fn new_obj<'a>(&self, jni: &'a JNI, p: i64) -> LocalRef<'a> {
+        let obj = self.cls.with_jni(jni).alloc_object().unwrap();
+        obj.set_long_field(self.p, p);
+        obj
+    }
+}
+
+pub struct ThinWrapper<T: Cleanable + 'static> {
+    cls: ThinClass,
+    _p: PhantomData<T>,
+}
+
+impl<T: Cleanable + 'static> ThinWrapper<T> {
+    pub fn read<'a, 'b>(&self, obj: &'b impl JRef<'a>) -> &'b T { unsafe { &*(self.cls.read(obj) as *const T) } }
+    pub fn new_obj<'a>(&self, jni: &'a JNI, data: Arc<T>) -> LocalRef<'a> {
+        let obj = self.cls.new_obj(jni, &*data as *const T as _);
+        objs().cleaner.reg(&obj, data);
+        obj
+    }
+}
+
 pub struct FatClass {
     cls: GlobalRef<'static>,
     p: usize,
@@ -47,6 +76,7 @@ pub struct FatClass {
 }
 
 impl FatClass {
+    pub fn wrap<T: Unsize<dyn Cleanable> + ?Sized + 'static>(self) -> FatWrapper<T> { FatWrapper { cls: self, _p: PhantomData } }
     pub fn read<'a>(&self, obj: &impl JRef<'a>) -> [i64; 2] { [obj.get_long_field(self.p), obj.get_long_field(self.q)] }
     pub fn new_obj<'a>(&self, jni: &'a JNI, [p, q]: [i64; 2]) -> LocalRef<'a> {
         let obj = self.cls.with_jni(jni).alloc_object().unwrap();
@@ -56,17 +86,20 @@ impl FatClass {
     }
 }
 
-pub struct ThinClass<T: Cleanable + 'static> {
-    cls: GlobalRef<'static>,
-    p: usize,
+pub struct FatWrapper<T: Unsize<dyn Cleanable> + ?Sized + 'static> {
+    cls: FatClass,
     _p: PhantomData<T>,
 }
 
-impl<T: Cleanable + 'static> ThinClass<T> {
-    pub fn read<'a, 'b>(&self, obj: &'b impl JRef<'a>) -> &'b T { unsafe { transmute(obj.get_long_field(self.p)) } }
+impl<T: Unsize<dyn Cleanable> + ?Sized + 'static> FatWrapper<T> {
+    pub fn read<'a, 'b>(&self, obj: &'b impl JRef<'a>) -> &'b T {
+        let [ptr, meta] = self.cls.read(obj);
+        unsafe { &*core::ptr::from_raw_parts(ptr as _, transmute_copy(&meta)) }
+    }
+
     pub fn new_obj<'a>(&self, jni: &'a JNI, data: Arc<T>) -> LocalRef<'a> {
-        let obj = self.cls.with_jni(jni).alloc_object().unwrap();
-        obj.set_long_field(self.p, unsafe { transmute(&*data) });
+        let (ptr, meta) = (&*data as *const T).to_raw_parts();
+        let obj = self.cls.new_obj(jni, [ptr as _, unsafe { transmute_copy(&meta) }]);
         objs().cleaner.reg(&obj, data);
         obj
     }
@@ -111,25 +144,25 @@ impl<'a> ClassBuilder<'a> {
         self
     }
 
-    fn define_priv(&mut self) -> LocalRef<'static> {
+    pub fn define_empty(&mut self) -> GlobalRef<'static> {
         let cls = self.cls.write_class_simple(self.av).unwrap();
         let cls = self.av.ldr.with_jni(self.cls.jni).define_class(&self.name.slash, &*cls.byte_elems().unwrap()).unwrap();
         cls.register_natives(&self.natives).unwrap();
-        cls
+        cls.new_global_ref().unwrap()
+    }
+
+    pub fn define_thin(&mut self) -> ThinClass {
+        let p = self.av.new_field_node(self.cls.jni, c"0", c"J", 0, 0).unwrap();
+        self.cls.class_fields(self.av).unwrap().collection_extend(&self.av.jv, [p]).unwrap();
+        let cls = self.define_empty();
+        ThinClass { p: cls.get_field_id(c"0", c"J").unwrap(), cls }
     }
 
     pub fn define_fat(&mut self) -> FatClass {
         let p = self.av.new_field_node(self.cls.jni, c"0", c"J", 0, 0).unwrap();
         let q = self.av.new_field_node(self.cls.jni, c"1", c"J", 0, 0).unwrap();
         self.cls.class_fields(self.av).unwrap().collection_extend(&self.av.jv, [p, q]).unwrap();
-        let cls = self.define_priv();
-        FatClass { cls: cls.new_global_ref().unwrap(), p: cls.get_field_id(c"0", c"J").unwrap(), q: cls.get_field_id(c"1", c"J").unwrap() }
-    }
-
-    pub fn define_thin<T: Cleanable + 'static>(&mut self) -> ThinClass<T> {
-        let p = self.av.new_field_node(self.cls.jni, c"0", c"J", 0, 0).unwrap();
-        self.cls.class_fields(self.av).unwrap().collection_extend(&self.av.jv, [p]).unwrap();
-        let cls = self.define_priv();
-        ThinClass { cls: cls.new_global_ref().unwrap(), p: cls.get_field_id(c"0", c"J").unwrap(), _p: PhantomData }
+        let cls = self.define_empty();
+        FatClass { p: cls.get_field_id(c"0", c"J").unwrap(), q: cls.get_field_id(c"1", c"J").unwrap(), cls }
     }
 }

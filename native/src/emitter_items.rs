@@ -1,69 +1,62 @@
 use crate::{
-    asm::*,
     global::GlobalObjs,
     jvm::*,
-    mapping_base::*,
     objs,
-    util::geometry::{write_block_pos, write_dir, GeomExt, DIR_STEPS},
+    util::{
+        cleaner::Cleanable,
+        geometry::{write_block_pos, write_dir, GeomExt, DIR_STEPS},
+        ClassBuilder, ThinWrapper,
+    },
 };
+use alloc::sync::Arc;
 use macros::dyn_abi;
 
 pub struct EmitterItems {
     pub item: GlobalRef<'static>,
-    item_maker: GlobalRef<'static>,
-    item_maker_tier: usize,
+    item_factory: ThinWrapper<ItemFactory>,
+}
+
+struct ItemFactory {
+    tier: u8,
+}
+
+impl Cleanable for ItemFactory {
+    fn free(self: Arc<Self>, _: &JNI) {}
 }
 
 impl EmitterItems {
     pub fn new(jni: &'static JNI) -> Self {
-        // Item Class
-        let GlobalObjs { av, cn, mn, gcn, namer, .. } = objs();
-        let mut name = namer.next();
-        let mut cls = av.new_class_node(jni, &name.slash, &cn.block_item.slash).unwrap();
-        let methods = [
-            mn.item_get_desc_id.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.block_item_place_block.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-        ];
-        cls.class_methods(av).unwrap().collection_extend(&av.jv, methods).unwrap();
-        cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
-        cls.register_natives(&[mn.item_get_desc_id.native(get_desc_id_dyn()), mn.block_item_place_block.native(place_block_dyn())]).unwrap();
-        let item = cls.new_global_ref().unwrap();
-
-        // Item Maker
-        name = namer.next();
-        cls = av.new_class_node(jni, &name.slash, c"java/lang/Object").unwrap();
-        cls.add_interfaces(av, [&*gcn.non_null_fn.slash]).unwrap();
-        cls.class_fields(av).unwrap().collection_extend(&av.jv, [av.new_field_node(jni, c"0", c"B", 0, 0).unwrap()]).unwrap();
-        let apply = MSig { owner: name.clone(), name: cs("apply"), sig: cs("(Ljava/lang/Object;)Ljava/lang/Object;") };
-        cls.class_methods(av).unwrap().collection_extend(&av.jv, [apply.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap()]).unwrap();
-        cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
-        cls.register_natives(&[apply.native(make_item_dyn())]).unwrap();
-
-        Self { item, item_maker: cls.new_global_ref().unwrap(), item_maker_tier: cls.get_field_id(c"0", c"B").unwrap() }
+        let GlobalObjs { cn, mn, gcn, .. } = objs();
+        let item = ClassBuilder::new_2(jni, &cn.block_item.slash)
+            .native_2(&mn.item_get_desc_id, get_desc_id_dyn())
+            .native_2(&mn.block_item_place_block, place_block_dyn())
+            .define_empty();
+        let item_factory = ClassBuilder::new_2(jni, c"java/lang/Object")
+            .interfaces([&*gcn.non_null_fn.slash])
+            .native_1(c"apply", c"(Ljava/lang/Object;)Ljava/lang/Object;", build_item_dyn())
+            .define_thin()
+            .wrap::<ItemFactory>();
+        Self { item, item_factory }
     }
 
-    pub fn make_item_maker<'a>(&self, jni: &'a JNI, tier: u8) -> LocalRef<'a> {
-        let obj = self.item_maker.with_jni(jni).alloc_object().unwrap();
-        obj.set_byte_field(self.item_maker_tier, tier);
-        obj
-    }
+    pub fn new_item_factory<'a>(&self, jni: &'a JNI, tier: u8) -> LocalRef<'a> { self.item_factory.new_obj(jni, ItemFactory { tier }.into()) }
+}
+
+#[dyn_abi]
+fn build_item(jni: &'static JNI, this: usize, props: usize) -> usize {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let defs = lk.emitter_items.get().unwrap();
+    let tiers = lk.tiers.borrow();
+    let tier = &tiers[defs.item_factory.read(&BorrowedRef::new(jni, &this)).tier as usize];
+    let item = defs.item.with_jni(jni).new_object(objs().mv.block_item_init, &[tier.emitter_block.get().unwrap().raw, props]).unwrap();
+    tier.emitter_item.set(item.new_global_ref().unwrap()).ok().unwrap();
+    item.into_raw()
 }
 
 #[dyn_abi]
 fn get_desc_id(jni: &JNI, this: usize) -> usize {
-    let GlobalObjs { mv, .. } = objs();
+    let mv = &objs().mv;
     BorrowedRef::new(jni, &this).call_nonvirtual_object_method(mv.item.raw, mv.item_get_desc_id, &[]).unwrap().unwrap().into_raw()
-}
-
-#[dyn_abi]
-fn make_item(jni: &'static JNI, this: usize, props: usize) -> usize {
-    let lk = objs().mtx.lock(jni).unwrap();
-    let defs = lk.emitter_items.get().unwrap();
-    let tiers = lk.tiers.borrow();
-    let tier = &tiers[BorrowedRef::new(jni, &this).get_byte_field(defs.item_maker_tier) as usize];
-    let item = defs.item.with_jni(jni).new_object(objs().mv.block_item_init, &[tier.emitter_block.get().unwrap().raw, props]).unwrap();
-    tier.emitter_item.set(item.new_global_ref().unwrap()).ok().unwrap();
-    item.into_raw()
 }
 
 #[dyn_abi]
