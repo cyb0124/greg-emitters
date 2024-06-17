@@ -12,7 +12,7 @@ use crate::{
         cleaner::Cleaner,
         client::Sprite,
         mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
-        ClassNamer,
+        ClassBuilder, ClassNamer,
     },
 };
 use alloc::{format, sync::Arc, vec::Vec};
@@ -78,31 +78,20 @@ impl GlobalObjs {
         let gcn = GregCN::new();
 
         // Class Writer
-        let mut name = namer.next();
+        let name = namer.next();
         let mut cls = av.new_class_node(ldr.jni, &name.slash, c"org/objectweb/asm/ClassWriter").unwrap();
         cls = ldr.define_class(&name.slash, &*cls.write_class_simple(&av).unwrap().byte_elems().unwrap()).unwrap();
         let writer_cls = cls.new_global_ref().unwrap();
 
         // Stubs
-        name = namer.next();
-        cls = av.new_class_node(ldr.jni, &name.slash, c"java/lang/Object").unwrap();
-        let greg_reg_item_stub =
-            MSig { owner: name.clone(), name: cs("0"), sig: msig([b"Ljava/lang/String;".as_slice()], gcn.non_null_fn.sig.to_bytes()) };
-        let greg_creative_tab_stub = MSig { owner: name.clone(), name: cs("0"), sig: msig([cn.item.sig.to_bytes()], b"Z") };
-        let greg_reinit_models_stub = MSig { owner: name.clone(), name: cs("0"), sig: cs("()V") };
-        let methods = [
-            greg_reg_item_stub.new_method_node(&av, ldr.jni, ACC_PUBLIC | ACC_STATIC | ACC_NATIVE).unwrap(),
-            greg_creative_tab_stub.new_method_node(&av, ldr.jni, ACC_PUBLIC | ACC_STATIC | ACC_NATIVE).unwrap(),
-            greg_reinit_models_stub.new_method_node(&av, ldr.jni, ACC_PUBLIC | ACC_STATIC | ACC_NATIVE).unwrap(),
-        ];
-        let natives = [
-            greg_reg_item_stub.native(greg_reg_item_stub_dyn()),
-            greg_creative_tab_stub.native(greg_creative_tab_stub_dyn()),
-            greg_reinit_models_stub.native(greg_reinit_models_stub_dyn()),
-        ];
-        cls.class_methods(&av).unwrap().collection_extend(&av.jv, methods).unwrap();
-        cls = ldr.define_class(&name.slash, &*cls.write_class_simple(&av).unwrap().byte_elems().unwrap()).unwrap();
-        cls.register_natives(&natives).unwrap();
+        let mut cb = ClassBuilder::new_1(&av, &namer, c"java/lang/Object");
+        let greg_reg_item_stub = cb.stub_name(cs("0"), msig([b"Ljava/lang/String;".as_slice()], gcn.non_null_fn.sig.to_bytes()));
+        cb.stub(&greg_reg_item_stub, greg_reg_item_stub_dyn());
+        let greg_creative_tab_stub = cb.stub_name(cs("0"), msig([cn.item.sig.to_bytes()], b"Z"));
+        cb.stub(&greg_creative_tab_stub, greg_creative_tab_stub_dyn());
+        let greg_reinit_models_stub = cb.stub_name(cs("0"), cs("()V"));
+        cb.stub(&greg_reinit_models_stub, greg_reinit_models_stub_dyn());
+        cb.define_empty();
 
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),

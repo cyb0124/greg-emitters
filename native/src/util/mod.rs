@@ -12,7 +12,7 @@ use crate::{
     objs,
     registry::MOD_ID,
 };
-use alloc::{format, sync::Arc, vec::Vec};
+use alloc::{ffi::CString, format, sync::Arc, vec::Vec};
 use core::{
     ffi::CStr,
     marker::{PhantomData, Unsize},
@@ -140,6 +140,21 @@ impl<'a> ClassBuilder<'a> {
 
     pub fn native_2(&mut self, mn: &'a MSig, func: usize) -> &mut Self {
         self.methods.collection_add(&self.av.jv, mn.new_method_node(self.av, self.cls.jni, ACC_PUBLIC | ACC_NATIVE).unwrap().raw).unwrap();
+        self.natives.push(mn.native(func));
+        self
+    }
+
+    pub fn insns<T: JRef<'a>>(&mut self, mn: &'a MSig, insns: impl IntoIterator<Item = T>) -> &mut Self {
+        let method = mn.new_method_node(self.av, &self.cls.jni, ACC_PUBLIC).unwrap();
+        method.method_insns(self.av).unwrap().append_insns(self.av, insns).unwrap();
+        self.methods.collection_add(&self.av.jv, method.raw).unwrap();
+        self
+    }
+
+    pub fn stub_name(&self, name: CString, sig: CString) -> MSig { MSig { owner: self.name.clone(), name, sig } }
+    pub fn stub(&mut self, mn: &MSig, func: usize) -> &mut Self {
+        let method = mn.new_method_node(self.av, self.cls.jni, ACC_PUBLIC | ACC_STATIC | ACC_NATIVE).unwrap();
+        self.methods.collection_add(&self.av.jv, method.raw).unwrap();
         self.natives.push(mn.native(func));
         self
     }
