@@ -9,7 +9,7 @@ use crate::{
     ti,
     util::{
         cleaner::Cleaner,
-        client::Sprite,
+        client::{ClientDefs, Sprite},
         mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
         tile::TileDefs,
         ClassBuilder, ClassNamer,
@@ -37,6 +37,7 @@ pub struct GlobalObjs {
     pub writer_cls: GlobalRef<'static>,
     pub cleaner: Cleaner,
     pub tile_defs: TileDefs,
+    pub client_defs: Option<ClientDefs>,
     pub greg_reg_item_stub: MSig,
     pub greg_creative_tab_stub: MSig,
     pub greg_reinit_models_stub: MSig,
@@ -96,6 +97,7 @@ impl GlobalObjs {
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
             tile_defs: TileDefs::init(&av, &cn, &mn, &fmn, &namer),
+            client_defs: mv.client.fmap(|_| ClientDefs::init(&av, &namer, &cn, &mn)),
             cleaner: Cleaner::new(&av, &namer),
             gmn: GregMN::new(&cn, &gcn),
             namer,

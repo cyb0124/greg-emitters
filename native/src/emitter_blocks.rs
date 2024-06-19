@@ -7,7 +7,7 @@ use crate::{
     registry::{forge_reg, EMITTER_ID},
     util::{
         cleaner::Cleanable,
-        client::{ClientExt, DrawContext},
+        client::DrawContext,
         geometry::{lerp, new_voxel_shape, GeomExt, DIR_ATTS},
         tile::{Tile, TileExt, TileSupplier},
         ClassBuilder, ThinWrapper,
@@ -32,7 +32,6 @@ pub struct EmitterBlocks {
     block_tier: usize,
     pub tile_type: GlobalRef<'static>,
     energy_container: ThinWrapper<EnergyContainer>,
-    pub renderer_provider: Option<GlobalRef<'static>>,
     shapes: [GlobalRef<'static>; 6],
     shape_fallback: GlobalRef<'static>,
 }
@@ -92,7 +91,7 @@ impl EmitterBlocks {
             .wrap::<EnergyContainer>();
 
         // Block
-        let mut name = namer.next();
+        let name = namer.next();
         let mut cls = av.new_class_node(jni, &name.slash, &cn.base_tile_block.slash).unwrap();
         cls.class_fields(av).unwrap().collection_extend(&av.jv, [av.new_field_node(jni, c"0", c"B", 0, 0).unwrap()]).unwrap();
         let methods = [
@@ -130,21 +129,6 @@ impl EmitterBlocks {
         }
         blocks = blocks.set_of(&av.jv).unwrap();
 
-        // Renderer
-        let renderer_provider = mv.client.fmap(|_| {
-            name = namer.next();
-            cls = av.new_class_node(jni, &name.slash, c"java/lang/Object").unwrap();
-            cls.add_interfaces(av, [&*cn.tile_renderer_provider.slash, &cn.tile_renderer.slash]).unwrap();
-            let create = mn.tile_renderer_provider_create.new_method_node(av, jni, ACC_PUBLIC).unwrap();
-            let insns = [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()];
-            create.method_insns(av).unwrap().append_insns(av, insns).unwrap();
-            let methods = [create, mn.tile_renderer_render.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap()];
-            cls.class_methods(av).unwrap().collection_extend(&av.jv, methods).unwrap();
-            cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
-            cls.register_natives(&[mn.tile_renderer_render.native(render_tile_dyn())]).unwrap();
-            cls.alloc_object().unwrap().new_global_ref().unwrap()
-        });
-
         // Shapes
         let center = point![0.5, 0.5, 0.5];
         let shapes = DIR_ATTS.map(|at| {
@@ -157,7 +141,6 @@ impl EmitterBlocks {
             block_tier,
             tile_type: tile_defs.new_tile_type(jni, &EmitterSupplier, &blocks),
             energy_container,
-            renderer_provider,
             shapes,
             shape_fallback: new_voxel_shape(jni, center.map(|x| x - RADIUS), center.map(|x| x + RADIUS)),
         }
@@ -180,6 +163,76 @@ impl Tile for Emitter {
 
     fn get_cap(&self, cap: BorrowedRef) -> Option<usize> {
         cap.is_same_object(objs().mtx.lock(cap.jni).unwrap().gmv.get().unwrap().energy_container_cap.raw).then(|| self.energy_cap.raw)
+    }
+
+    fn render(&self, lk: &GlobalMtx, mut dc: DrawContext, mut tf: Affine3<f32>) {
+        let common = self.common.borrow();
+        let Some(dir) = common.dir else { return };
+        tf *= Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
+        // Legs
+        const LEG_LEN: f32 = 0.3;
+        const LEG_DIA: f32 = 0.05;
+        const LEG_POS: f32 = RADIUS * 0.6;
+        let greg_wire = lk.wire_sprite.get().unwrap();
+        let leg_side = greg_wire.sub(0., 0., LEG_DIA, LEG_LEN);
+        let leg_bot = greg_wire.sub(0., 0., LEG_DIA, LEG_DIA);
+        for x in [-LEG_POS, LEG_POS] {
+            let tf = tf * Translation3::new(x, 0., 0.);
+            dc.square(&leg_bot, &(tf * Translation3::new(0., -0.5, 0.) * DIR_ATTS[0] * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_DIA, 1.))));
+            let mut face = Translation3::new(0., LEG_LEN * 0.5 - 0.5, LEG_DIA * 0.5) * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_LEN, 1.));
+            for _ in 0..4 {
+                dc.square(&leg_side, &(tf * face));
+                face = DIR_ATTS[4] * face;
+            }
+        }
+        // Cylinder (r, h, v)
+        const CONTOUR: [(f32, f32, f32); 4] = [(1., 0., 0.), (1., 1., 1.), (0.9, 1., 0.8), (0.6, 0.8, 0.6)];
+        const N_SEGS: usize = 8;
+        let base = vector![RADIUS, libm::tanf(PI / N_SEGS as f32) * RADIUS];
+        let bot_y = LEG_LEN - 0.5;
+        let bot_q = tf * point![0., bot_y, 0.];
+        let bot_m = tf * vector![0., -1., 0.];
+        let top_y = RADIUS;
+        let top_p = point![0., lerp(bot_y, top_y, 0.7), 0.];
+        let top_q = tf * top_p;
+        let mut p0 = CONTOUR.map(|(r, h, _)| point![base.x * r, lerp(bot_y, top_y, h), base.y * r]);
+        let mut q0 = p0.map(|p| tf * p);
+        let mut n0: [_; 4] = array::from_fn(|i| (p0.get(i + 1).unwrap_or(&top_p) - p0[i]).cross(&vector![-base.y, 0., base.x]).normalize());
+        let mut m0 = n0.map(|n| tf * n);
+        let rot = UnitQuaternion::from_euler_angles(0., TAU / N_SEGS as f32, 0.);
+        let spr = lk.tiers.borrow()[self.tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
+        for _ in 0..N_SEGS / 2 {
+            let (p1, n1) = (p0.map(|p| rot * p), n0.map(|n| rot * n));
+            let (p2, n2) = (p1.map(|p| rot * p), n1.map(|n| rot * n));
+            let (q1, m1) = (p1.map(|p| tf * p), n1.map(|n| tf * n));
+            let (q2, m2) = (p2.map(|p| tf * p), n2.map(|n| tf * n));
+            // Side Contour
+            for i in 0..CONTOUR.len() - 1 {
+                let v0 = spr.lerp_v(CONTOUR[i].2);
+                let v1 = spr.lerp_v(CONTOUR[i + 1].2);
+                dc.vertex(q0[i], m0[i], spr.uv0.x, v0);
+                dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
+                dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
+                dc.vertex(q0[i + 1], m0[i], spr.uv0.x, v1);
+                dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
+                dc.vertex(q2[i], m2[i], spr.uv0.x, v0);
+                dc.vertex(q2[i + 1], m2[i], spr.uv0.x, v1);
+                dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
+            }
+            // Bottom Cap
+            let v = spr.lerp_v(CONTOUR[0].2);
+            dc.vertex(bot_q, bot_m, spr.uv1.x, spr.uv1.y);
+            dc.vertex(q2[0], bot_m, spr.uv0.x, v);
+            dc.vertex(q1[0], bot_m, spr.uv1.x, v);
+            dc.vertex(q0[0], bot_m, spr.uv0.x, v);
+            // Top Cap
+            let v = spr.lerp_v(CONTOUR.last().unwrap().2);
+            dc.vertex(top_q, *m1.last().unwrap(), spr.uv1.x, spr.uv1.y);
+            dc.vertex(*q0.last().unwrap(), *m0.last().unwrap(), spr.uv0.x, v);
+            dc.vertex(*q1.last().unwrap(), *m1.last().unwrap(), spr.uv1.x, v);
+            dc.vertex(*q2.last().unwrap(), *m2.last().unwrap(), spr.uv1.x, v);
+            (p0 = p2, q0 = q2, n0 = n2, m0 = m2);
+        }
     }
 }
 
@@ -224,80 +277,6 @@ fn get_shape(jni: &JNI, _this: usize, _state: usize, level: usize, pos: usize, _
 
 #[dyn_abi]
 fn get_render_shape(_: &JNI, _this: usize, _state: usize) -> usize { objs().mv.render_shape_tile.raw }
-
-#[dyn_abi]
-fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buffer_source: usize, light: i32, overlay: i32) {
-    let lk = objs().mtx.lock(jni).unwrap();
-    let emitter = lk.read_tile::<Emitter>(BorrowedRef::new(jni, &tile));
-    let common = emitter.common.borrow();
-    let Some(dir) = common.dir else { return };
-    let mut dc = DrawContext::new(&*lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
-    let tf = BorrowedRef::new(jni, &pose_stack).last_pose() * Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
-    // Legs
-    const LEG_LEN: f32 = 0.3;
-    const LEG_DIA: f32 = 0.05;
-    const LEG_POS: f32 = RADIUS * 0.6;
-    let greg_wire = lk.wire_sprite.get().unwrap();
-    let leg_side = greg_wire.sub(0., 0., LEG_DIA, LEG_LEN);
-    let leg_bot = greg_wire.sub(0., 0., LEG_DIA, LEG_DIA);
-    for x in [-LEG_POS, LEG_POS] {
-        let tf = tf * Translation3::new(x, 0., 0.);
-        dc.square(&leg_bot, &(tf * Translation3::new(0., -0.5, 0.) * DIR_ATTS[0] * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_DIA, 1.))));
-        let mut face = Translation3::new(0., LEG_LEN * 0.5 - 0.5, LEG_DIA * 0.5) * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_LEN, 1.));
-        for _ in 0..4 {
-            dc.square(&leg_side, &(tf * face));
-            face = DIR_ATTS[4] * face;
-        }
-    }
-    // Cylinder (r, h, v)
-    const CONTOUR: [(f32, f32, f32); 4] = [(1., 0., 0.), (1., 1., 1.), (0.9, 1., 0.8), (0.6, 0.8, 0.6)];
-    const N_SEGS: usize = 8;
-    let base = vector![RADIUS, libm::tanf(PI / N_SEGS as f32) * RADIUS];
-    let bot_y = LEG_LEN - 0.5;
-    let bot_q = tf * point![0., bot_y, 0.];
-    let bot_m = tf * vector![0., -1., 0.];
-    let top_y = RADIUS;
-    let top_p = point![0., lerp(bot_y, top_y, 0.7), 0.];
-    let top_q = tf * top_p;
-    let mut p0 = CONTOUR.map(|(r, h, _)| point![base.x * r, lerp(bot_y, top_y, h), base.y * r]);
-    let mut q0 = p0.map(|p| tf * p);
-    let mut n0: [_; 4] = array::from_fn(|i| (p0.get(i + 1).unwrap_or(&top_p) - p0[i]).cross(&vector![-base.y, 0., base.x]).normalize());
-    let mut m0 = n0.map(|n| tf * n);
-    let rot = UnitQuaternion::from_euler_angles(0., TAU / N_SEGS as f32, 0.);
-    let spr = lk.tiers.borrow()[emitter.tier as usize].emitter_sprite.uref().sub(0.4, 0.2, 0.6, 0.4);
-    for _ in 0..N_SEGS / 2 {
-        let (p1, n1) = (p0.map(|p| rot * p), n0.map(|n| rot * n));
-        let (p2, n2) = (p1.map(|p| rot * p), n1.map(|n| rot * n));
-        let (q1, m1) = (p1.map(|p| tf * p), n1.map(|n| tf * n));
-        let (q2, m2) = (p2.map(|p| tf * p), n2.map(|n| tf * n));
-        // Side Contour
-        for i in 0..CONTOUR.len() - 1 {
-            let v0 = spr.lerp_v(CONTOUR[i].2);
-            let v1 = spr.lerp_v(CONTOUR[i + 1].2);
-            dc.vertex(q0[i], m0[i], spr.uv0.x, v0);
-            dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
-            dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
-            dc.vertex(q0[i + 1], m0[i], spr.uv0.x, v1);
-            dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
-            dc.vertex(q2[i], m2[i], spr.uv0.x, v0);
-            dc.vertex(q2[i + 1], m2[i], spr.uv0.x, v1);
-            dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
-        }
-        // Bottom Cap
-        let v = spr.lerp_v(CONTOUR[0].2);
-        dc.vertex(bot_q, bot_m, spr.uv1.x, spr.uv1.y);
-        dc.vertex(q2[0], bot_m, spr.uv0.x, v);
-        dc.vertex(q1[0], bot_m, spr.uv1.x, v);
-        dc.vertex(q0[0], bot_m, spr.uv0.x, v);
-        // Top Cap
-        let v = spr.lerp_v(CONTOUR.last().unwrap().2);
-        dc.vertex(top_q, *m1.last().unwrap(), spr.uv1.x, spr.uv1.y);
-        dc.vertex(*q0.last().unwrap(), *m0.last().unwrap(), spr.uv0.x, v);
-        dc.vertex(*q1.last().unwrap(), *m1.last().unwrap(), spr.uv1.x, v);
-        dc.vertex(*q2.last().unwrap(), *m2.last().unwrap(), spr.uv1.x, v);
-        (p0 = p2, q0 = q2, n0 = n2, m0 = m2);
-    }
-}
 
 #[dyn_abi]
 fn new_tile(jni: &'static JNI, _this: usize, pos: usize, state: usize) -> usize {

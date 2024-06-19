@@ -1,6 +1,12 @@
-use super::geometry::lerp;
+use super::{
+    geometry::lerp,
+    mapping::{CN, MN},
+    ClassBuilder, ClassNamer, AV, OP_ALOAD, OP_ARETURN,
+};
 use crate::{global::GlobalMtx, jvm::*, mapping_base::*, objs, registry::make_resource_loc};
+use alloc::sync::Arc;
 use core::{ffi::CStr, mem::MaybeUninit};
+use macros::dyn_abi;
 use nalgebra::{point, vector, Affine3, ArrayStorage, Matrix4, Point2, Point3, Vector3};
 
 impl<'a, T: JRef<'a>> ClientExt<'a> for T {}
@@ -13,6 +19,30 @@ pub trait ClientExt<'a>: JRef<'a> {
         pose.call_object_method(mvc.matrix4fc_read, &[pose_data.as_mut_ptr() as _]).unwrap();
         Affine3::from_matrix_unchecked(Matrix4::from_data(unsafe { pose_data.assume_init() }))
     }
+}
+
+pub struct ClientDefs {
+    pub tile_renderer: GlobalRef<'static>,
+}
+
+impl ClientDefs {
+    pub fn init(av: &AV<'static>, namer: &ClassNamer, cn: &CN<Arc<CSig>>, mn: &MN<MSig>) -> Self {
+        let jni = av.ldr.jni;
+        let tile_renderer = ClassBuilder::new_1(av, namer, c"java/lang/Object")
+            .interfaces([&*cn.tile_renderer_provider.slash, &cn.tile_renderer.slash])
+            .native_2(&mn.tile_renderer_render, render_tile_dyn())
+            .insns(&mn.tile_renderer_provider_create, [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()])
+            .define_empty();
+        Self { tile_renderer: tile_renderer.alloc_object().unwrap().new_global_ref().unwrap() }
+    }
+}
+
+#[dyn_abi]
+fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buffer_source: usize, light: i32, overlay: i32) {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let dc = DrawContext::new(&lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
+    let pose = BorrowedRef::new(jni, &pose_stack).last_pose();
+    objs().tile_defs.tile.read(&lk, BorrowedRef::new(jni, &tile)).render(&lk, dc, pose)
 }
 
 #[derive(Clone, Copy)]

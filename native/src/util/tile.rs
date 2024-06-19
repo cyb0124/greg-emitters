@@ -1,5 +1,6 @@
 use super::{
     cleaner::Cleanable,
+    client::DrawContext,
     mapping::{ForgeMN, CN, MN},
     nbt::{new_compound, NBTExt, KEY_COMMON, KEY_SERVER},
     ClassBuilder, ClassNamer, FatWrapper,
@@ -14,6 +15,7 @@ use crate::{
 use alloc::{format, sync::Arc, vec::Vec};
 use core::any::Any;
 use macros::dyn_abi;
+use nalgebra::Affine3;
 use postcard::{de_flavors::Slice, Deserializer, Result};
 
 impl<'a, T: JRef<'a>> TileExt<'a> for T {}
@@ -36,7 +38,7 @@ pub trait TileSupplier: Send {
     fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> LocalRef<'static>;
 }
 
-pub trait Tile: Cleanable + Send {
+pub trait Tile: Cleanable {
     fn any(&self) -> &dyn Any;
     fn save_common(&self) -> Vec<u8>;
     fn save_server(&self) -> Vec<u8>;
@@ -44,10 +46,11 @@ pub trait Tile: Cleanable + Send {
     fn load_server<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()>;
     fn get_cap(&self, cap: BorrowedRef) -> Option<usize>;
     fn invalidate_caps(&self, jni: &JNI);
+    fn render(&self, lk: &GlobalMtx, dc: DrawContext, tf: Affine3<f32>);
 }
 
 pub struct TileDefs {
-    tile: FatWrapper<dyn Tile>,
+    pub tile: FatWrapper<dyn Tile>,
     tile_supplier: FatWrapper<dyn TileSupplier>,
 }
 

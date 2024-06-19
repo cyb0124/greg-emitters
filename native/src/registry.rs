@@ -71,9 +71,10 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
 fn on_forge_renderers(jni: &JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
     let fmvc = objs().fmv.client.uref();
+    let provider = objs().client_defs.uref().tile_renderer.raw;
     let lk = objs().mtx.lock(jni).unwrap();
     let defs = lk.emitter_blocks.get().unwrap();
-    evt.call_void_method(fmvc.renderers_evt_reg, &[defs.tile_type.raw, defs.renderer_provider.uref().raw]).unwrap()
+    evt.call_void_method(fmvc.renderers_evt_reg, &[defs.tile_type.raw, provider]).unwrap()
 }
 
 #[dyn_abi]
