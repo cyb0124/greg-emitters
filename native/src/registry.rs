@@ -61,7 +61,7 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
     let evt = BorrowedRef::new(jni, &evt);
     let key = evt.call_object_method(fmv.reg_evt_key, &[]).unwrap().unwrap();
     if key.equals(&av.jv, fmv.reg_key_blocks.raw).unwrap() {
-        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &lk.tiers.borrow(), &evt));
+        lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &lk, &evt));
     } else if key.equals(&av.jv, fmv.reg_key_tile_types.raw).unwrap() {
         forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
     }

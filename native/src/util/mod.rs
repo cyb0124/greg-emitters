@@ -2,11 +2,13 @@ pub mod cleaner;
 pub mod client;
 pub mod geometry;
 pub mod mapping;
+pub mod nbt;
+pub mod tile;
 
 use self::cleaner::Cleanable;
 use crate::{
     asm::*,
-    global::GlobalObjs,
+    global::{GlobalMtx, GlobalObjs},
     jvm::*,
     mapping_base::{CSig, MSig},
     objs,
@@ -46,7 +48,7 @@ pub struct ThinClass {
 }
 
 impl ThinClass {
-    pub fn wrap<T: Cleanable + 'static>(self) -> ThinWrapper<T> { ThinWrapper { cls: self, _p: PhantomData } }
+    pub fn wrap<T: Cleanable + Send + 'static>(self) -> ThinWrapper<T> { ThinWrapper { cls: self, _p: PhantomData } }
     pub fn read<'a>(&self, obj: &impl JRef<'a>) -> i64 { obj.get_long_field(self.p) }
     pub fn new_obj<'a>(&self, jni: &'a JNI, p: i64) -> LocalRef<'a> {
         let obj = self.cls.with_jni(jni).alloc_object().unwrap();
@@ -55,13 +57,15 @@ impl ThinClass {
     }
 }
 
-pub struct ThinWrapper<T: Cleanable + 'static> {
+// Not actually safe if T is accessed concurrently
+pub struct ThinWrapper<T: Cleanable + Send + 'static> {
     cls: ThinClass,
-    _p: PhantomData<T>,
+    _p: PhantomData<fn(T) -> T>,
 }
 
-impl<T: Cleanable + 'static> ThinWrapper<T> {
-    pub fn read<'a, 'b>(&self, obj: &'b impl JRef<'a>) -> &'b T { unsafe { &*(self.cls.read(obj) as *const T) } }
+impl<T: Cleanable + Send + 'static> ThinWrapper<T> {
+    // Borrow GlobalMtx to ensure lock is held.
+    pub fn read<'a>(&self, _: &'a GlobalMtx, obj: BorrowedRef<'_, 'a>) -> &'a T { unsafe { &*(self.cls.read(&obj) as *const T) } }
     pub fn new_obj<'a>(&self, jni: &'a JNI, data: Arc<T>) -> LocalRef<'a> {
         let obj = self.cls.new_obj(jni, &*data as *const T as _);
         objs().cleaner.reg(&obj, data);
@@ -76,7 +80,7 @@ pub struct FatClass {
 }
 
 impl FatClass {
-    pub fn wrap<T: Unsize<dyn Cleanable> + ?Sized + 'static>(self) -> FatWrapper<T> { FatWrapper { cls: self, _p: PhantomData } }
+    pub fn wrap<T: ?Sized + Send + 'static>(self) -> FatWrapper<T> { FatWrapper { cls: self, _p: PhantomData } }
     pub fn read<'a>(&self, obj: &impl JRef<'a>) -> [i64; 2] { [obj.get_long_field(self.p), obj.get_long_field(self.q)] }
     pub fn new_obj<'a>(&self, jni: &'a JNI, [p, q]: [i64; 2]) -> LocalRef<'a> {
         let obj = self.cls.with_jni(jni).alloc_object().unwrap();
@@ -86,17 +90,26 @@ impl FatClass {
     }
 }
 
-pub struct FatWrapper<T: Unsize<dyn Cleanable> + ?Sized + 'static> {
+// Not actually safe if T is accessed concurrently
+pub struct FatWrapper<T: ?Sized + Send + 'static> {
     cls: FatClass,
-    _p: PhantomData<T>,
+    _p: PhantomData<fn(T) -> T>,
 }
 
-impl<T: Unsize<dyn Cleanable> + ?Sized + 'static> FatWrapper<T> {
-    pub fn read<'a, 'b>(&self, obj: &'b impl JRef<'a>) -> &'b T {
-        let [ptr, meta] = self.cls.read(obj);
-        unsafe { &*core::ptr::from_raw_parts(ptr as _, transmute_copy(&meta)) }
+impl<T: ?Sized + Send + 'static> FatWrapper<T> {
+    pub fn new_static<'a>(&self, jni: &'a JNI, data: &'static T) -> LocalRef<'a> {
+        let (ptr, meta) = (data as *const T).to_raw_parts();
+        self.cls.new_obj(jni, [ptr as _, unsafe { transmute_copy(&meta) }])
     }
 
+    // Borrow GlobalMtx to ensure lock is held.
+    pub fn read<'a>(&self, _: &'a GlobalMtx, obj: BorrowedRef<'_, 'a>) -> &'a T {
+        let [ptr, meta] = self.cls.read(&obj);
+        unsafe { &*core::ptr::from_raw_parts(ptr as _, transmute_copy(&meta)) }
+    }
+}
+
+impl<T: Unsize<dyn Cleanable> + ?Sized + Send + 'static> FatWrapper<T> {
     pub fn new_obj<'a>(&self, jni: &'a JNI, data: Arc<T>) -> LocalRef<'a> {
         let (ptr, meta) = (&*data as *const T).to_raw_parts();
         let obj = self.cls.new_obj(jni, [ptr as _, unsafe { transmute_copy(&meta) }]);

@@ -1,6 +1,6 @@
 #![no_std]
 #![no_main]
-#![feature(unsize, ptr_metadata)]
+#![feature(unsize, ptr_metadata, try_blocks)]
 
 #[cfg(target_arch = "x86_64")]
 macro_rules! dyn_abi {
@@ -30,7 +30,6 @@ mod global;
 pub mod jvm;
 pub mod mapping_base;
 mod registry;
-mod tile_utils;
 mod util;
 
 extern crate alloc;

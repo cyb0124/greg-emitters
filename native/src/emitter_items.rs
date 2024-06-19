@@ -1,10 +1,12 @@
 use crate::{
+    emitter_blocks::Emitter,
     global::GlobalObjs,
     jvm::*,
     objs,
     util::{
         cleaner::Cleanable,
         geometry::{write_block_pos, write_dir, GeomExt, DIR_STEPS},
+        tile::TileExt,
         ClassBuilder, ThinWrapper,
     },
 };
@@ -47,7 +49,7 @@ fn build_item(jni: &'static JNI, this: usize, props: usize) -> usize {
     let lk = objs().mtx.lock(jni).unwrap();
     let defs = lk.emitter_items.get().unwrap();
     let tiers = lk.tiers.borrow();
-    let tier = &tiers[defs.item_factory.read(&BorrowedRef::new(jni, &this)).tier as usize];
+    let tier = &tiers[defs.item_factory.read(&lk, BorrowedRef::new(jni, &this)).tier as usize];
     let item = defs.item.with_jni(jni).new_object(objs().mv.block_item_init, &[tier.emitter_block.get().unwrap().raw, props]).unwrap();
     tier.emitter_item.set(item.new_global_ref().unwrap()).ok().unwrap();
     item.into_raw()
@@ -62,32 +64,25 @@ fn get_desc_id(jni: &JNI, this: usize) -> usize {
 #[dyn_abi]
 fn place_block(jni: &'static JNI, this: usize, ctx: usize, state: usize) -> bool {
     let GlobalObjs { mtx, mv, .. } = objs();
-    if !BorrowedRef::new(jni, &this).call_nonvirtual_bool_method(mv.block_item.raw, mv.block_item_place_block, &[ctx, state]).unwrap() {
-        return false;
-    }
+    let this = BorrowedRef::new(jni, &this);
+    let true = this.call_nonvirtual_bool_method(mv.block_item.raw, mv.block_item_place_block, &[ctx, state]).unwrap() else { return false };
     let ctx = BorrowedRef::new(jni, &ctx);
     let level = ctx.call_object_method(mv.use_on_ctx_get_level, &[]).unwrap().unwrap();
-    if level.get_bool_field(mv.level_is_client) {
-        return true;
-    }
+    let false = level.level_is_client() else { return true };
     let mut pos = ctx.call_object_method(mv.use_on_ctx_get_clicked_pos, &[]).unwrap().unwrap();
     let dir_obj = ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap();
-    let mut dir = dir_obj.read_dir();
-    let tile = level.call_object_method(mv.block_getter_get_tile, &[pos.raw]).unwrap().unwrap();
+    let dir = dir_obj.read_dir();
+    let tile = level.tile_at(pos.raw);
     let lk = mtx.lock(jni).unwrap();
-    lk.emitter_blocks.get().unwrap().from_tile(&tile).common.borrow_mut().dir = Some(dir);
-    dir ^= 1;
-    pos = write_block_pos(jni, pos.read_vec3i() + DIR_STEPS[dir as usize]);
-    let mut pipe_block = level.call_object_method(mv.block_getter_get_block_state, &[pos.raw]).unwrap().unwrap();
-    pipe_block = pipe_block.call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
+    lk.read_tile::<Emitter>(tile.borrow()).common.borrow_mut().dir = Some(dir);
+    let opp = dir ^ 1;
+    pos = write_block_pos(jni, pos.read_vec3i() + DIR_STEPS[opp as usize]);
+    let pipe_block = level.block_state_at(pos.raw).block_state_get_block();
     let gmv = lk.gmv.get().unwrap();
-    if !pipe_block.is_instance_of(gmv.pipe_block.raw) {
-        return true;
-    }
+    let true = pipe_block.is_instance_of(gmv.pipe_block.raw) else { return true };
     let Some(pipe_node) = pipe_block.call_object_method(gmv.pipe_block_get_node, &[level.raw, pos.raw]).unwrap() else { return true };
-    if !pipe_block.call_bool_method(gmv.pipe_block_can_connect, &[pipe_node.raw, write_dir(jni, dir).raw, tile.raw]).unwrap() {
-        return true;
-    }
+    let opp_obj = write_dir(jni, opp);
+    let true = pipe_block.call_bool_method(gmv.pipe_block_can_connect, &[pipe_node.raw, opp_obj.raw, tile.raw]).unwrap() else { return true };
     pipe_node.call_void_method(gmv.pipe_node_set_connection, &[dir_obj.raw, 1, 0]).unwrap();
     true
 }

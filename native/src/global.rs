@@ -7,11 +7,11 @@ use crate::{
     objs,
     registry::{add_greg_dyn_resource, EMITTER_ID},
     ti,
-    tile_utils::TileUtils,
     util::{
         cleaner::Cleaner,
         client::Sprite,
         mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
+        tile::TileDefs,
         ClassBuilder, ClassNamer,
     },
 };
@@ -36,7 +36,7 @@ pub struct GlobalObjs {
     pub namer: ClassNamer,
     pub writer_cls: GlobalRef<'static>,
     pub cleaner: Cleaner,
-    pub tile_utils: TileUtils,
+    pub tile_defs: TileDefs,
     pub greg_reg_item_stub: MSig,
     pub greg_creative_tab_stub: MSig,
     pub greg_reinit_models_stub: MSig,
@@ -95,7 +95,7 @@ impl GlobalObjs {
 
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
-            tile_utils: TileUtils::new(&av, &cn, &mn, &namer),
+            tile_defs: TileDefs::init(&av, &cn, &mn, &fmn, &namer),
             cleaner: Cleaner::new(&av, &namer),
             gmn: GregMN::new(&cn, &gcn),
             namer,

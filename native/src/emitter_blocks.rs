@@ -1,23 +1,28 @@
 use crate::{
     asm::*,
-    global::{GlobalObjs, Tier},
+    global::{GlobalMtx, GlobalObjs, Tier},
     jvm::*,
     mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
-    tile_utils::{const_long_impl, non_null_supplier_get_self_impl, read_tag, tile_get_update_packet_impl, write_tag, TAG_COMMON, TAG_SERVER},
-    util::cleaner::Cleanable,
-    util::client::{ClientExt, DrawContext},
-    util::geometry::{lerp, new_voxel_shape, GeomExt, DIR_ATTS},
+    util::{
+        cleaner::Cleanable,
+        client::{ClientExt, DrawContext},
+        geometry::{lerp, new_voxel_shape, GeomExt, DIR_ATTS},
+        tile::{Tile, TileExt, TileSupplier},
+        ClassBuilder, ThinWrapper,
+    },
 };
-use alloc::{format, sync::Arc};
+use alloc::{format, sync::Arc, vec::Vec};
 use core::{
+    any::Any,
     array,
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     f32::consts::{PI, TAU},
 };
 use macros::dyn_abi;
 use nalgebra::{point, vector, Affine3, Point, Scale3, Translation3, UnitQuaternion};
+use postcard::{de_flavors::Slice, Deserializer, Result};
 use serde::{Deserialize, Serialize};
 use simba::scalar::SupersetOf;
 
@@ -25,61 +30,70 @@ const RADIUS: f32 = 0.25;
 
 pub struct EmitterBlocks {
     block_tier: usize,
-    tile_cls: GlobalRef<'static>,
-    tile_p: usize,
-    tile_energy_container_cap: usize,
     pub tile_type: GlobalRef<'static>,
+    energy_container: ThinWrapper<EnergyContainer>,
     pub renderer_provider: Option<GlobalRef<'static>>,
     shapes: [GlobalRef<'static>; 6],
     shape_fallback: GlobalRef<'static>,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+pub struct CommonData {
+    pub dir: Option<u8>,
+    polar: f32,
+    azimuth: f32,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ServerData {
+    energy: i64,
+}
+
+pub struct Emitter {
+    tier: u8,
+    energy_cap: GlobalRef<'static>,
+    pub common: RefCell<CommonData>,
+    server: RefCell<ServerData>,
+}
+
+impl Cleanable for Emitter {
+    fn free(self: Arc<Self>, jni: &JNI) { Arc::into_inner(self).unwrap().energy_cap.replace_jni(jni); }
+}
+
+impl Emitter {
+    fn volts(&self, tiers: &[Tier]) -> i64 { tiers[self.tier as usize].volt }
+    fn eu_capacity(&self, tiers: &[Tier]) -> i64 { self.volts(tiers) * 2 }
+}
+
+struct EnergyContainer {
+    tile: OnceCell<WeakGlobalRef<'static>>,
+}
+
+impl Cleanable for EnergyContainer {
+    fn free(self: Arc<Self>, jni: &JNI) { Arc::into_inner(self).unwrap().tile.into_inner().unwrap().replace_jni(jni); }
+}
+
+struct EmitterSupplier;
+
 impl EmitterBlocks {
-    pub fn init(jni: &'static JNI, tiers: &[Tier], reg_evt: &impl JRef<'static>) -> Self {
-        // Tile
-        let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, namer, tile_utils, .. } = objs();
-        let mut name = namer.next();
-        let mut cls = av.new_class_node(jni, &name.slash, &cn.tile.slash).unwrap();
-        cls.add_interfaces(av, [&*fcn.non_null_supplier.slash, &*gcn.energy_container.slash]).unwrap();
-        let fields = [av.new_field_node(jni, c"0", c"J", 0, 0).unwrap(), av.new_field_node(jni, c"0", &fcn.lazy_opt.sig, 0, 0).unwrap()];
-        cls.class_fields(av).unwrap().collection_extend(&av.jv, fields).unwrap();
-        let methods = [
-            tile_get_update_packet_impl(jni),
-            non_null_supplier_get_self_impl(jni),
-            mn.tile_get_update_tag.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.tile_load.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.tile_save_additional.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            fmn.get_cap.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            fmn.invalidate_caps.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            gmn.can_input_eu_from_side.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            gmn.accept_eu.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            gmn.change_eu.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            gmn.get_eu_stored.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            gmn.get_eu_capacity.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            const_long_impl(jni, &gmn.get_input_amps, 1),
-            gmn.get_input_volts.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-        ];
-        let natives = [
-            mn.tile_get_update_tag.native(get_update_tag_dyn()),
-            mn.tile_load.native(on_load_dyn()),
-            mn.tile_save_additional.native(save_additional_dyn()),
-            fmn.get_cap.native(get_cap_dyn()),
-            fmn.invalidate_caps.native(invalidate_caps_dyn()),
-            gmn.can_input_eu_from_side.native(can_input_eu_from_side_dyn()),
-            gmn.accept_eu.native(accept_eu_dyn()),
-            gmn.change_eu.native(change_eu_dyn()),
-            gmn.get_eu_stored.native(get_eu_stored_dyn()),
-            gmn.get_eu_capacity.native(get_eu_capacity_dyn()),
-            gmn.get_input_volts.native(get_input_volts_dyn()),
-        ];
-        cls.class_methods(av).unwrap().collection_extend(&av.jv, methods).unwrap();
-        cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
-        cls.register_natives(&natives).unwrap();
-        let tile_cls = cls.new_global_ref().unwrap();
+    pub fn init(jni: &'static JNI, lk: &GlobalMtx, reg_evt: &impl JRef<'static>) -> Self {
+        let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, namer, tile_defs, .. } = objs();
+        let energy_container = ClassBuilder::new_2(jni, c"java/lang/Object")
+            .interfaces([&*fcn.non_null_supplier.slash, &*gcn.energy_container.slash])
+            .insns(&fmn.non_null_supplier_get, [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()])
+            .insns(&gmn.get_input_amps, [av.new_ldc_insn(jni, av.jv.wrap_long(jni, 1).unwrap().raw).unwrap(), av.new_insn(jni, OP_LRETURN).unwrap()])
+            .native_2(&gmn.can_input_eu_from_side, can_input_eu_from_side_dyn())
+            .native_2(&gmn.accept_eu, accept_eu_dyn())
+            .native_2(&gmn.change_eu, change_eu_dyn())
+            .native_2(&gmn.get_eu_stored, get_eu_stored_dyn())
+            .native_2(&gmn.get_eu_capacity, get_eu_capacity_dyn())
+            .native_2(&gmn.get_input_volts, get_input_volts_dyn())
+            .define_thin()
+            .wrap::<EnergyContainer>();
 
         // Block
-        name = namer.next();
-        cls = av.new_class_node(jni, &name.slash, &cn.base_tile_block.slash).unwrap();
+        let mut name = namer.next();
+        let mut cls = av.new_class_node(jni, &name.slash, &cn.base_tile_block.slash).unwrap();
         cls.class_fields(av).unwrap().collection_extend(&av.jv, [av.new_field_node(jni, c"0", c"B", 0, 0).unwrap()]).unwrap();
         let methods = [
             mn.tile_block_new_tile.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
@@ -103,6 +117,7 @@ impl EmitterBlocks {
         props = props.call_object_method(mv.block_beh_props_strength, &[f_raw(0.25), f_raw(1E6)]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_dyn_shape, &[]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_sound, &[mv.sound_type_metal.raw]).unwrap().unwrap();
+        let tiers = lk.tiers.borrow();
         let n_emitter_tiers = tiers.iter().filter(|x| x.has_emitter).count();
         let mut blocks = cls.new_object_array(n_emitter_tiers as _, 0).unwrap();
         for (block_i, (tier_i, tier)) in tiers.iter().enumerate().filter(|(_, x)| x.has_emitter).enumerate() {
@@ -140,18 +155,46 @@ impl EmitterBlocks {
 
         Self {
             block_tier,
-            tile_p: tile_cls.get_field_id(c"0", c"J").unwrap(),
-            tile_energy_container_cap: tile_cls.get_field_id(c"0", &fcn.lazy_opt.sig).unwrap(),
-            tile_cls,
-            tile_type: tile_utils.define_tile_type(&blocks, |jni, pos, state| new_tile(jni, 0, pos, state)),
+            tile_type: tile_defs.new_tile_type(jni, &EmitterSupplier, &blocks),
+            energy_container,
             renderer_provider,
             shapes,
             shape_fallback: new_voxel_shape(jni, center.map(|x| x - RADIUS), center.map(|x| x + RADIUS)),
         }
     }
+}
 
-    // Borrowing self to ensure lock is held.
-    pub fn from_tile<'a>(&'a self, tile: &impl JRef<'a>) -> &'a Emitter { unsafe { &*(tile.get_long_field(self.tile_p) as *const Emitter) } }
+impl Tile for Emitter {
+    fn any(&self) -> &dyn Any { self }
+    fn invalidate_caps(&self, jni: &JNI) { self.energy_cap.with_jni(jni).lazy_opt_invalidate() }
+    fn save_common(&self) -> Vec<u8> { postcard::to_allocvec(&*self.common.borrow()).unwrap() }
+    fn save_server(&self) -> Vec<u8> { postcard::to_allocvec(&*self.server.borrow()).unwrap() }
+
+    fn load_common<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()> {
+        CommonData::deserialize_in_place(de, &mut *self.common.borrow_mut())
+    }
+
+    fn load_server<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()> {
+        ServerData::deserialize_in_place(de, &mut *self.server.borrow_mut())
+    }
+
+    fn get_cap(&self, cap: BorrowedRef) -> Option<usize> {
+        cap.is_same_object(objs().mtx.lock(cap.jni).unwrap().gmv.get().unwrap().energy_container_cap.raw).then(|| self.energy_cap.raw)
+    }
+}
+
+impl TileSupplier for EmitterSupplier {
+    fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> LocalRef<'static> {
+        let defs = lk.emitter_blocks.get().unwrap();
+        let block = state.block_state_get_block();
+        let tier = block.get_byte_field(defs.block_tier);
+        let energy_container = Arc::new(EnergyContainer { tile: OnceCell::new() });
+        let energy_cap = defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap();
+        let emitter = Arc::new(Emitter { tier, energy_cap, common: <_>::default(), server: <_>::default() });
+        let tile = objs().tile_defs.new_tile(pos.jni, defs.tile_type.raw, pos.raw, state.raw, emitter);
+        energy_container.tile.set(tile.new_weak_global_ref().unwrap()).ok().unwrap();
+        tile
+    }
 }
 
 #[dyn_abi]
@@ -172,7 +215,7 @@ fn get_shape(jni: &JNI, _this: usize, _state: usize, level: usize, pos: usize, _
     let defs = lk.emitter_blocks.get().unwrap();
     // Rethrow is needed for lithium's SingleBlockBlockView.
     match BorrowedRef::new(jni, &level).call_object_method(mv.block_getter_get_tile, &[pos]) {
-        Ok(Some(tile)) => defs.from_tile(&tile).common.borrow().dir.map_or(defs.shape_fallback.raw, |i| defs.shapes[i as usize].raw),
+        Ok(Some(tile)) => lk.read_tile::<Emitter>(tile.borrow()).common.borrow().dir.map_or(defs.shape_fallback.raw, |i| defs.shapes[i as usize].raw),
         Ok(None) => defs.shape_fallback.raw,
         Err(JVMError::Throwable(e)) => e.throw().map(|_| 0).unwrap(),
         Err(e) => panic!("{e}"),
@@ -184,10 +227,8 @@ fn get_render_shape(_: &JNI, _this: usize, _state: usize) -> usize { objs().mv.r
 
 #[dyn_abi]
 fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buffer_source: usize, light: i32, overlay: i32) {
-    let tile = BorrowedRef::new(jni, &tile);
     let lk = objs().mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.get().unwrap();
-    let emitter = defs.from_tile(&tile);
+    let emitter = lk.read_tile::<Emitter>(BorrowedRef::new(jni, &tile));
     let common = emitter.common.borrow();
     let Some(dir) = common.dir else { return };
     let mut dc = DrawContext::new(&*lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
@@ -259,50 +300,49 @@ fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buff
 }
 
 #[dyn_abi]
-fn get_cap(jni: &JNI, this: usize, cap: usize, side: usize) -> usize {
-    let GlobalObjs { fmv, mtx, .. } = objs();
-    let lk = mtx.lock(jni).unwrap();
-    let this = BorrowedRef::new(jni, &this);
-    if BorrowedRef::new(jni, &cap).is_same_object(lk.gmv.get().unwrap().energy_container_cap.raw) {
-        this.get_object_field(lk.emitter_blocks.get().unwrap().tile_energy_container_cap).unwrap().into_raw()
-    } else {
-        this.call_nonvirtual_object_method(fmv.cap_provider.raw, fmv.get_cap, &[cap, side]).unwrap().unwrap().into_raw()
-    }
+fn new_tile(jni: &'static JNI, _this: usize, pos: usize, state: usize) -> usize {
+    EmitterSupplier.new_tile(&objs().mtx.lock(jni).unwrap(), BorrowedRef::new(jni, &pos), BorrowedRef::new(jni, &state)).into_raw()
 }
 
 #[dyn_abi]
-fn invalidate_caps(jni: &JNI, this: usize) {
-    let GlobalObjs { fmv, mtx, .. } = objs();
-    let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.get().unwrap();
-    let this = BorrowedRef::new(jni, &this);
-    this.call_nonvirtual_void_method(fmv.cap_provider.raw, fmv.invalidate_caps, &[]).unwrap();
-    this.get_object_field(defs.tile_energy_container_cap).unwrap().call_void_method(fmv.lazy_opt_invalidate, &[]).unwrap()
+fn on_place(jni: &JNI, this: usize, _state: usize, level: usize, pos: usize, _old_state: usize, _moved_by_piston: bool) {
+    BorrowedRef::new(jni, &level).call_void_method(objs().mv.level_update_neighbors_for_out_signal, &[pos, this]).unwrap()
+}
+
+//////////////////////////////////////
+// Energy Container Implementations //
+//////////////////////////////////////
+
+fn energy_container_tile<'a>(lk: &GlobalMtx, this: BorrowedRef<'a, '_>) -> LocalRef<'a> {
+    lk.emitter_blocks.get().unwrap().energy_container.read(lk, this).tile.get().unwrap().with_jni(&this.jni).new_local_ref().unwrap()
 }
 
 #[dyn_abi]
 fn get_eu_stored(jni: &JNI, this: usize) -> i64 {
-    objs().mtx.lock(jni).unwrap().emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).server.borrow().energy
+    let lk = objs().mtx.lock(jni).unwrap();
+    let result = lk.read_tile::<Emitter>(energy_container_tile(&lk, BorrowedRef::new(jni, &this)).borrow()).server.borrow().energy;
+    result
 }
 
 #[dyn_abi]
 fn get_eu_capacity(jni: &JNI, this: usize) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
-    let result = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).eu_capacity(&lk.tiers.borrow());
+    let result = lk.read_tile::<Emitter>(energy_container_tile(&lk, BorrowedRef::new(jni, &this)).borrow()).eu_capacity(&*lk.tiers.borrow());
     result
 }
 
 #[dyn_abi]
 fn get_input_volts(jni: &JNI, this: usize) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
-    let result = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this)).volts(&lk.tiers.borrow());
+    let result = lk.read_tile::<Emitter>(energy_container_tile(&lk, BorrowedRef::new(jni, &this)).borrow()).volts(&*lk.tiers.borrow());
     result
 }
 
 #[dyn_abi]
 fn can_input_eu_from_side(jni: &JNI, this: usize, in_side: usize) -> bool {
     let lk = objs().mtx.lock(jni).unwrap();
-    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this));
+    let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
+    let emitter = lk.read_tile::<Emitter>(tile.borrow());
     let result = Some(BorrowedRef::new(jni, &in_side).read_dir() ^ 1) == emitter.common.borrow().dir;
     result
 }
@@ -314,17 +354,15 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
     }
     let GlobalObjs { mv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let this = BorrowedRef::new(jni, &this);
-    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&this);
+    let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
+    let emitter = lk.read_tile::<Emitter>(tile.borrow());
     if in_side != 0 && Some(BorrowedRef::new(jni, &in_side).read_dir() ^ 1) != emitter.common.borrow().dir {
         return 0;
     }
     let tiers = lk.tiers.borrow();
     if volts > emitter.volts(&tiers) {
-        let level = this.get_object_field(mv.tile_level).unwrap();
-        let pos = this.get_object_field(mv.tile_pos).unwrap();
         let state = mv.blocks_fire.with_jni(jni).call_object_method(mv.block_default_state, &[]).unwrap().unwrap();
-        level.call_bool_method(mv.level_set_block_and_update, &[pos.raw, state.raw]).unwrap();
+        tile.tile_level().call_bool_method(mv.level_set_block_and_update, &[tile.tile_pos().raw, state.raw]).unwrap();
         return 1;
     }
     let mut data = emitter.server.borrow_mut();
@@ -338,90 +376,10 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
 #[dyn_abi]
 fn change_eu(jni: &JNI, this: usize, delta: i64) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
-    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &this));
+    let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
+    let emitter = lk.read_tile::<Emitter>(tile.borrow());
     let mut data = emitter.server.borrow_mut();
-    let base = data.energy;
-    data.energy = (base + delta).clamp(0, emitter.eu_capacity(&lk.tiers.borrow()));
-    data.energy - base
-}
-
-#[dyn_abi]
-fn new_tile(jni: &JNI, _this: usize, pos: usize, state: usize) -> usize {
-    let GlobalObjs { mv, fmv, mtx, cleaner, .. } = objs();
-    let lk = mtx.lock(jni).unwrap();
-    let defs = lk.emitter_blocks.get().unwrap();
-    let block = BorrowedRef::new(jni, &state).call_object_method(mv.block_state_get_block, &[]).unwrap().unwrap();
-    let tier = block.get_byte_field(defs.block_tier);
-    let tile = defs.tile_cls.with_jni(jni).new_object(mv.tile_init, &[defs.tile_type.raw, pos, state]).unwrap();
-    let cap = fmv.lazy_opt.with_jni(jni).call_static_object_method(fmv.lazy_opt_of, &[tile.raw]).unwrap().unwrap();
-    tile.set_object_field(defs.tile_energy_container_cap, cap.raw);
-    let emitter = Arc::new(Emitter { tier, common: <_>::default(), server: <_>::default() });
-    tile.set_long_field(defs.tile_p, &*emitter as *const _ as _);
-    cleaner.reg(&tile, emitter);
-    tile.into_raw()
-}
-
-#[dyn_abi]
-fn on_place(jni: &JNI, this: usize, _state: usize, level: usize, pos: usize, _old_state: usize, _moved_by_piston: bool) {
-    BorrowedRef::new(jni, &level).call_void_method(objs().mv.level_update_neighbors_for_out_signal, &[pos, this]).unwrap()
-}
-
-#[dyn_abi]
-fn get_update_tag(jni: &JNI, tile: usize) -> usize {
-    let GlobalObjs { mv, mtx, .. } = objs();
-    let lk = mtx.lock(jni).unwrap();
-    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&BorrowedRef::new(jni, &tile));
-    let tag = mv.nbt_compound.with_jni(jni).new_object(mv.nbt_compound_init, &[]).unwrap();
-    write_tag(&tag, TAG_COMMON, &emitter.common);
-    tag.into_raw()
-}
-
-#[dyn_abi]
-fn save_additional(jni: &JNI, tile: usize, nbt: usize) {
-    let tile = BorrowedRef::new(jni, &tile);
-    let tag = BorrowedRef::new(jni, &nbt);
-    let GlobalObjs { mv, mtx, .. } = objs();
-    let lk = mtx.lock(jni).unwrap();
-    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&tile);
-    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[tag.raw]).unwrap();
-    write_tag(&tag, TAG_COMMON, &emitter.common);
-    write_tag(&tag, TAG_SERVER, &emitter.server)
-}
-
-#[dyn_abi]
-fn on_load(jni: &JNI, tile: usize, nbt: usize) {
-    let GlobalObjs { mv, mtx, .. } = objs();
-    let tile = BorrowedRef::new(jni, &tile);
-    let tag = BorrowedRef::new(jni, &nbt);
-    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[tag.raw]).unwrap();
-    let lk = mtx.lock(jni).unwrap();
-    let emitter = lk.emitter_blocks.get().unwrap().from_tile(&tile);
-    let _ = read_tag(&tag, TAG_COMMON, &mut *emitter.common.borrow_mut()) && read_tag(&tag, TAG_SERVER, &mut *emitter.server.borrow_mut());
-}
-
-#[derive(Default, Serialize, Deserialize)]
-pub struct CommonData {
-    pub dir: Option<u8>,
-    polar: f32,
-    azimuth: f32,
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct ServerData {
-    energy: i64,
-}
-
-pub struct Emitter {
-    tier: u8,
-    pub common: RefCell<CommonData>,
-    server: RefCell<ServerData>,
-}
-
-impl Cleanable for Emitter {
-    fn free(self: Arc<Self>, _: &JNI) {}
-}
-
-impl Emitter {
-    fn volts(&self, tiers: &[Tier]) -> i64 { tiers[self.tier as usize].volt }
-    fn eu_capacity(&self, tiers: &[Tier]) -> i64 { self.volts(tiers) * 2 }
+    let old = data.energy;
+    data.energy = (old + delta).clamp(0, emitter.eu_capacity(&lk.tiers.borrow()));
+    data.energy - old
 }
