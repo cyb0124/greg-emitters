@@ -10,7 +10,7 @@ pub struct Cleaner {
     task: FatClass,
 }
 
-pub trait Cleanable {
+pub trait Cleanable: Send {
     fn free(self: Arc<Self>, jni: &JNI);
 }
 

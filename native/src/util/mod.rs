@@ -48,7 +48,7 @@ pub struct ThinClass {
 }
 
 impl ThinClass {
-    pub fn wrap<T: Cleanable + Send + 'static>(self) -> ThinWrapper<T> { ThinWrapper { cls: self, _p: PhantomData } }
+    pub fn wrap<T: Cleanable + 'static>(self) -> ThinWrapper<T> { ThinWrapper { cls: self, _p: PhantomData } }
     pub fn read<'a>(&self, obj: &impl JRef<'a>) -> i64 { obj.get_long_field(self.p) }
     pub fn new_obj<'a>(&self, jni: &'a JNI, p: i64) -> LocalRef<'a> {
         let obj = self.cls.with_jni(jni).alloc_object().unwrap();
@@ -57,13 +57,12 @@ impl ThinClass {
     }
 }
 
-// Not actually safe if T is accessed concurrently
-pub struct ThinWrapper<T: Cleanable + Send + 'static> {
+pub struct ThinWrapper<T: Cleanable + 'static> {
     cls: ThinClass,
     _p: PhantomData<fn(T) -> T>,
 }
 
-impl<T: Cleanable + Send + 'static> ThinWrapper<T> {
+impl<T: Cleanable + 'static> ThinWrapper<T> {
     // Borrow GlobalMtx to ensure lock is held.
     pub fn read<'a>(&self, _: &'a GlobalMtx, obj: BorrowedRef<'_, 'a>) -> &'a T { unsafe { &*(self.cls.read(&obj) as *const T) } }
     pub fn new_obj<'a>(&self, jni: &'a JNI, data: Arc<T>) -> LocalRef<'a> {
@@ -90,7 +89,6 @@ impl FatClass {
     }
 }
 
-// Not actually safe if T is accessed concurrently
 pub struct FatWrapper<T: ?Sized + Send + 'static> {
     cls: FatClass,
     _p: PhantomData<fn(T) -> T>,
