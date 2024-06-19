@@ -1,4 +1,4 @@
-use crate::{asm::*, global::GlobalObjs, jvm::*, mapping_base::*, objs, util::BaseExt};
+use crate::{asm::*, global::GlobalObjs, jvm::*, mapping_base::*, objs, util::UtilExt};
 use alloc::{sync::Arc, vec::Vec};
 use bstr::B;
 use mapping_macros::Functor;

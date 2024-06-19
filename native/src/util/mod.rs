@@ -22,8 +22,8 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-impl<'a, T: JRef<'a>> BaseExt<'a> for T {}
-pub trait BaseExt<'a>: JRef<'a> {
+impl<'a, T: JRef<'a>> UtilExt<'a> for T {}
+pub trait UtilExt<'a>: JRef<'a> {
     fn static_field_2(&self, msig: &MSig) -> GlobalRef<'a> { self.static_field_1(&msig.name, &msig.sig) }
     fn static_field_1(&self, name: &CStr, sig: &CStr) -> GlobalRef<'a> {
         self.get_static_object_field(self.get_static_field_id(name, sig).unwrap()).unwrap().new_global_ref().unwrap()
@@ -43,7 +43,7 @@ impl ClassNamer {
 }
 
 pub struct ThinClass {
-    cls: GlobalRef<'static>,
+    pub cls: GlobalRef<'static>,
     p: usize,
 }
 
@@ -58,7 +58,7 @@ impl ThinClass {
 }
 
 pub struct ThinWrapper<T: Cleanable + 'static> {
-    cls: ThinClass,
+    pub cls: ThinClass,
     _p: PhantomData<fn(T) -> T>,
 }
 
@@ -73,7 +73,7 @@ impl<T: Cleanable + 'static> ThinWrapper<T> {
 }
 
 pub struct FatClass {
-    cls: GlobalRef<'static>,
+    pub cls: GlobalRef<'static>,
     p: usize,
     q: usize,
 }
@@ -90,7 +90,7 @@ impl FatClass {
 }
 
 pub struct FatWrapper<T: ?Sized + Send + 'static> {
-    cls: FatClass,
+    pub cls: FatClass,
     _p: PhantomData<fn(T) -> T>,
 }
 
@@ -140,6 +140,11 @@ impl<'a> ClassBuilder<'a> {
 
     pub fn interfaces<'b>(&mut self, slashes: impl IntoIterator<Item = &'b CStr>) -> &mut Self {
         self.cls.add_interfaces(self.av, slashes).unwrap();
+        self
+    }
+
+    pub fn gsig(&mut self, gsig: &CStr) -> &mut Self {
+        self.cls.class_set_gsig(self.av, gsig).unwrap();
         self
     }
 

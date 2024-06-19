@@ -99,15 +99,15 @@ fn entry_common(jni: &'static JNI, inst: usize) {
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub extern "sysv64" fn entry_sysv64(jni: &'static JNI, ldr_cls: usize) { entry_common(jni, ldr_cls) }
+pub extern "sysv64" fn entry_sysv64(jni: &'static JNI, inst: usize) { entry_common(jni, inst) }
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub extern "win64" fn entry_win64(jni: &'static JNI, ldr_cls: usize) {
+pub extern "win64" fn entry_win64(jni: &'static JNI, inst: usize) {
     unsafe { ENV.is_win = true }
-    entry_common(jni, ldr_cls)
+    entry_common(jni, inst)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn entry_aarch64(jni: &'static JNI, ldr_cls: usize) { entry_common(jni, ldr_cls) }
+pub extern "C" fn entry_aarch64(jni: &'static JNI, inst: usize) { entry_common(jni, inst) }

@@ -1,3 +1,4 @@
+use crate::util::ClassBuilder;
 use crate::util::{client::Sprite, mapping::GregMV};
 use crate::{asm::*, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping_base::*, objs, ti};
 use alloc::{format, vec::Vec};
@@ -20,16 +21,12 @@ pub fn init() {
 }
 
 pub fn add_forge_listener(bus: &GlobalRef<'static>, evt_sig: &[u8], func: usize) {
-    let GlobalObjs { av, namer, fmv, .. } = objs();
-    let name = namer.next();
-    let mut cls = av.new_class_node(av.ldr.jni, &name.slash, c"java/lang/Object").unwrap();
-    cls.add_interfaces(&av, [c"java/util/function/Consumer"]).unwrap();
-    let gsig = Vec::from_iter([b"Ljava/lang/Object;Ljava/util/function/Consumer<", evt_sig, b">;"].into_iter().flatten().copied());
-    cls.class_set_gsig(&av, &cs(gsig)).unwrap();
-    let accept = MSig { owner: name.clone(), name: cs("accept"), sig: cs("(Ljava/lang/Object;)V") };
-    cls.class_methods(&av).unwrap().collection_add(&av.jv, accept.new_method_node(&av, cls.jni, ACC_PUBLIC | ACC_NATIVE).unwrap().raw).unwrap();
-    cls = av.ldr.define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
-    cls.register_natives(&[accept.native(func)]).unwrap();
+    let GlobalObjs { av, fmv, .. } = objs();
+    let cls = ClassBuilder::new_2(av.ldr.jni, c"java/lang/Object")
+        .interfaces([c"java/util/function/Consumer"])
+        .gsig(&cs(Vec::from_iter([b"Ljava/lang/Object;Ljava/util/function/Consumer<", evt_sig, b">;"].into_iter().flatten().copied())))
+        .native_1(c"accept", c"(Ljava/lang/Object;)V", func)
+        .define_empty();
     bus.call_void_method(fmv.evt_bus_add_listener, &[cls.alloc_object().unwrap().raw]).unwrap()
 }
 

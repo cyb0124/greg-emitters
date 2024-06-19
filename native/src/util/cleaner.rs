@@ -1,4 +1,4 @@
-use super::{BaseExt, ClassBuilder, ClassNamer, FatClass};
+use super::{ClassBuilder, ClassNamer, FatClass, UtilExt};
 use crate::{asm::*, jvm::*, mapping_base::*, objs};
 use alloc::sync::Arc;
 use core::mem::transmute;

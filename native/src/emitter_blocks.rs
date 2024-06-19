@@ -29,7 +29,7 @@ use simba::scalar::SupersetOf;
 const RADIUS: f32 = 0.25;
 
 pub struct EmitterBlocks {
-    block_tier: usize,
+    block: ThinWrapper<Block>,
     pub tile_type: GlobalRef<'static>,
     energy_container: ThinWrapper<EnergyContainer>,
     shapes: [GlobalRef<'static>; 6],
@@ -74,9 +74,17 @@ impl Cleanable for EnergyContainer {
 
 struct EmitterSupplier;
 
+struct Block {
+    tier: u8,
+}
+
+impl Cleanable for Block {
+    fn free(self: Arc<Self>, _: &JNI) {}
+}
+
 impl EmitterBlocks {
     pub fn init(jni: &'static JNI, lk: &GlobalMtx, reg_evt: &impl JRef<'static>) -> Self {
-        let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, namer, tile_defs, .. } = objs();
+        let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, tile_defs, .. } = objs();
         let energy_container = ClassBuilder::new_2(jni, c"java/lang/Object")
             .interfaces([&*fcn.non_null_supplier.slash, &*gcn.energy_container.slash])
             .insns(&fmn.non_null_supplier_get, [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()])
@@ -90,40 +98,27 @@ impl EmitterBlocks {
             .define_thin()
             .wrap::<EnergyContainer>();
 
-        // Block
-        let name = namer.next();
-        let mut cls = av.new_class_node(jni, &name.slash, &cn.base_tile_block.slash).unwrap();
-        cls.class_fields(av).unwrap().collection_extend(&av.jv, [av.new_field_node(jni, c"0", c"B", 0, 0).unwrap()]).unwrap();
-        let methods = [
-            mn.tile_block_new_tile.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.block_beh_get_render_shape.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.block_beh_get_shape.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.block_beh_get_drops.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-            mn.block_beh_on_place.new_method_node(av, jni, ACC_PUBLIC | ACC_NATIVE).unwrap(),
-        ];
-        let natives = [
-            mn.tile_block_new_tile.native(new_tile_dyn()),
-            mn.block_beh_get_render_shape.native(get_render_shape_dyn()),
-            mn.block_beh_get_shape.native(get_shape_dyn()),
-            mn.block_beh_get_drops.native(get_drops_dyn()),
-            mn.block_beh_on_place.native(on_place_dyn()),
-        ];
-        (cls.class_methods(av).unwrap()).collection_extend(&av.jv, methods).unwrap();
-        cls = av.ldr.with_jni(jni).define_class(&name.slash, &*cls.write_class_simple(av).unwrap().byte_elems().unwrap()).unwrap();
-        cls.register_natives(&natives).unwrap();
-        let block_tier = cls.get_field_id(c"0", c"B").unwrap();
+        // Blocks
+        let block = ClassBuilder::new_2(jni, &cn.base_tile_block.slash)
+            .native_2(&mn.tile_block_new_tile, new_tile_dyn())
+            .native_2(&mn.block_beh_get_render_shape, get_render_shape_dyn())
+            .native_2(&mn.block_beh_get_shape, get_shape_dyn())
+            .native_2(&mn.block_beh_get_drops, get_drops_dyn())
+            .native_2(&mn.block_beh_on_place, on_place_dyn())
+            .define_thin()
+            .wrap::<Block>();
         let mut props = mv.block_beh_props.with_jni(jni).call_static_object_method(mv.block_beh_props_of, &[]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_strength, &[f_raw(0.25), f_raw(1E6)]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_dyn_shape, &[]).unwrap().unwrap();
         props = props.call_object_method(mv.block_beh_props_sound, &[mv.sound_type_metal.raw]).unwrap().unwrap();
         let tiers = lk.tiers.borrow();
         let n_emitter_tiers = tiers.iter().filter(|x| x.has_emitter).count();
-        let mut blocks = cls.new_object_array(n_emitter_tiers as _, 0).unwrap();
+        let mut blocks = block.cls.cls.new_object_array(n_emitter_tiers as _, 0).unwrap();
         for (block_i, (tier_i, tier)) in tiers.iter().enumerate().filter(|(_, x)| x.has_emitter).enumerate() {
             let true = tier.has_emitter else { continue };
-            let block = cls.new_object(mv.base_tile_block_init, &[props.raw]).unwrap();
+            let block = block.new_obj(jni, Arc::new(Block { tier: tier_i as _ }));
+            block.call_void_method(mv.base_tile_block_init, &[props.raw]).unwrap();
             blocks.set_object_elem(block_i as _, block.raw).unwrap();
-            block.set_byte_field(block_tier, tier_i as _);
             tier.emitter_block.set(block.new_global_ref().unwrap()).ok().unwrap();
             forge_reg(reg_evt, &format!("{EMITTER_ID}_{}", tier.name), block.raw);
         }
@@ -138,7 +133,7 @@ impl EmitterBlocks {
         });
 
         Self {
-            block_tier,
+            block,
             tile_type: tile_defs.new_tile_type(jni, &EmitterSupplier, &blocks),
             energy_container,
             shapes,
@@ -239,8 +234,7 @@ impl Tile for Emitter {
 impl TileSupplier for EmitterSupplier {
     fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> LocalRef<'static> {
         let defs = lk.emitter_blocks.get().unwrap();
-        let block = state.block_state_get_block();
-        let tier = block.get_byte_field(defs.block_tier);
+        let tier = defs.block.read(&lk, state.block_state_get_block().borrow()).tier;
         let energy_container = Arc::new(EnergyContainer { tile: OnceCell::new() });
         let energy_cap = defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap();
         let emitter = Arc::new(Emitter { tier, energy_cap, common: <_>::default(), server: <_>::default() });
@@ -255,7 +249,7 @@ fn get_drops(jni: &JNI, this: usize, _state: usize, _loot_builder: usize) -> usi
     let GlobalObjs { mtx, av, mv, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let tiers = lk.tiers.borrow();
-    let tier = BorrowedRef::new(jni, &this).get_byte_field(lk.emitter_blocks.get().unwrap().block_tier);
+    let tier = lk.emitter_blocks.get().unwrap().block.read(&lk, BorrowedRef::new(jni, &this)).tier;
     let item = tiers[tier as usize].emitter_item.get().unwrap();
     let stack = mv.item_stack.with_jni(jni).new_object(mv.item_stack_init, &[item.raw, 1, 0]).unwrap();
     mv.item_stack.with_jni(jni).new_object_array(1, stack.raw).unwrap().array_as_list(&av.jv).unwrap().into_raw()
