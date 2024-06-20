@@ -11,14 +11,13 @@ use crate::{
     objs,
 };
 use alloc::{sync::Arc, vec::Vec};
-use core::{cell::RefCell, ffi::CStr};
+use core::cell::RefCell;
 use macros::dyn_abi;
 
 pub trait Menu: Cleanable {}
 
 pub trait MenuType: Send {
     fn new_client(&self, data: &[u8]) -> Arc<dyn Menu>;
-    fn title(&self) -> &CStr;
     fn raw(&self, lk: &GlobalMtx) -> usize;
 }
 
@@ -31,13 +30,18 @@ pub struct GUIDefs {
 // Access to MenuType is guarded by the global lock, and the Arc is never shared.
 unsafe impl Send for MenuProvider {}
 struct MenuProvider {
+    title: GlobalRef<'static>,
     menu_type: &'static dyn MenuType,
     menu: RefCell<Option<Arc<dyn Menu>>>,
-    data: RefCell<Option<Vec<u8>>>,
+    data: Vec<u8>,
 }
 
 impl Cleanable for MenuProvider {
-    fn free(self: Arc<Self>, jni: &JNI) { Arc::into_inner(self).unwrap().menu.into_inner().map(|x| x.free(jni)); }
+    fn free(self: Arc<Self>, jni: &JNI) {
+        let MenuProvider { title, menu, .. } = Arc::into_inner(self).unwrap();
+        title.replace_jni(jni);
+        menu.into_inner().map(|x| x.free(jni));
+    }
 }
 
 impl GUIDefs {
@@ -68,11 +72,20 @@ impl GUIDefs {
         fmv.forge_menu_type.with_jni(jni).call_static_object_method(fmv.forge_menu_type_create, &[container_factory.raw]).unwrap().unwrap()
     }
 
-    pub fn open_menu<'a>(&self, player: &impl JRef<'a>, menu_type: &'static dyn MenuType, menu: Arc<dyn Menu>, data: Vec<u8>) {
-        let fmv = &objs().fmv;
-        let provider = MenuProvider { menu_type, menu: RefCell::new(Some(menu)), data: RefCell::new(Some(data)) };
-        let provider = self.menu_provider.new_obj(player.jni(), Arc::new(provider));
-        let network_hooks = fmv.network_hooks.with_jni(player.jni());
+    pub fn open_menu(
+        &self,
+        player: &impl JRef<'static>,
+        menu_type: &'static dyn MenuType,
+        menu: Arc<dyn Menu>,
+        title: &impl JRef<'static>, // String
+        data: Vec<u8>,
+    ) {
+        let GlobalObjs { mv, fmv, .. } = objs();
+        let jni = player.jni();
+        let title = mv.chat_component.with_jni(jni).call_static_object_method(mv.chat_component_translatable, &[title.raw()]).unwrap().unwrap();
+        let provider = MenuProvider { title: title.new_global_ref().unwrap(), menu_type, menu: RefCell::new(Some(menu)), data };
+        let provider = self.menu_provider.new_obj(jni, Arc::new(provider));
+        let network_hooks = fmv.network_hooks.with_jni(jni);
         network_hooks.call_static_void_method(fmv.network_hooks_open_screen, &[player.raw(), provider.raw, provider.raw]).unwrap()
     }
 }
@@ -101,10 +114,8 @@ fn menu_provider_create_menu(jni: &JNI, this: usize, id: i32, _inv: usize, _play
 
 #[dyn_abi]
 fn menu_provider_get_display_name(jni: &JNI, this: usize) -> usize {
-    let GlobalObjs { mtx, gui_defs, mv, .. } = objs();
-    let lk = mtx.lock(jni).unwrap();
-    let title = jni.new_utf(gui_defs.menu_provider.read(&lk, BorrowedRef::new(jni, &this)).menu_type.title()).unwrap();
-    mv.chat_component.with_jni(jni).call_static_object_method(mv.chat_component_translatable, &[title.raw]).unwrap().unwrap().into_raw()
+    let GlobalObjs { mtx, gui_defs, .. } = objs();
+    gui_defs.menu_provider.read(&mtx.lock(jni).unwrap(), BorrowedRef::new(jni, &this)).title.raw
 }
 
 #[dyn_abi]
@@ -112,9 +123,8 @@ fn menu_provider_accept(jni: &JNI, this: usize, byte_buf: usize) {
     let GlobalObjs { mtx, gui_defs, mv, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let this = gui_defs.menu_provider.read(&lk, BorrowedRef::new(jni, &this));
-    let data = this.data.borrow_mut().take().unwrap();
-    let ba = jni.new_byte_array(data.len() as _).unwrap();
-    ba.write_byte_array(&data, 0).unwrap();
+    let ba = jni.new_byte_array(this.data.len() as _).unwrap();
+    ba.write_byte_array(&this.data, 0).unwrap();
     BorrowedRef::new(jni, &byte_buf).call_object_method(mv.friendly_byte_buf_write_byte_array, &[ba.raw]).unwrap();
 }
 
