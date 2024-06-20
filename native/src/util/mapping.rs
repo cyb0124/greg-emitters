@@ -17,6 +17,9 @@ pub struct ForgeCN<T> {
     pub lazy_opt: T,
     pub cap: T,
     pub cap_provider: T,
+    pub container_factory: T,
+    pub forge_menu_type: T,
+    pub network_hooks: T,
     // Client
     pub renderers_evt: T,
     pub atlas_evt: T,
@@ -37,6 +40,9 @@ impl ForgeCN<Arc<CSig>> {
             lazy_opt: b"net.minecraftforge.common.util.LazyOptional",
             cap: b"net.minecraftforge.common.capabilities.Capability",
             cap_provider: b"net.minecraftforge.common.capabilities.CapabilityProvider",
+            container_factory: b"net.minecraftforge.network.IContainerFactory",
+            forge_menu_type: b"net.minecraftforge.common.extensions.IForgeMenuType",
+            network_hooks: b"net.minecraftforge.network.NetworkHooks",
             // Client
             renderers_evt: b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers",
             atlas_evt: b"net.minecraftforge.client.event.TextureStitchEvent",
@@ -49,6 +55,9 @@ pub struct ForgeMN {
     pub get_cap: MSig,
     pub invalidate_caps: MSig,
     pub non_null_supplier_get: MSig,
+    pub container_factory_create: MSig,
+    pub forge_menu_type_create: MSig,
+    pub network_hooks_open_screen: MSig,
 }
 
 impl ForgeMN {
@@ -61,6 +70,21 @@ impl ForgeMN {
             },
             invalidate_caps: MSig { owner: fcn.cap_provider.clone(), name: cs("invalidateCaps"), sig: cs("()V") },
             non_null_supplier_get: MSig { owner: fcn.non_null_supplier.clone(), name: cs("get"), sig: cs("()Ljava/lang/Object;") },
+            container_factory_create: MSig {
+                owner: fcn.container_factory.clone(),
+                name: cs("create"),
+                sig: msig([b"I", cn.inventory.sig.to_bytes(), cn.friendly_byte_buf.sig.to_bytes()], cn.abstract_container_menu.sig.to_bytes()),
+            },
+            forge_menu_type_create: MSig {
+                owner: fcn.forge_menu_type.clone(),
+                name: cs("create"),
+                sig: msig([fcn.container_factory.sig.to_bytes()], cn.menu_type.sig.to_bytes()),
+            },
+            network_hooks_open_screen: MSig {
+                owner: fcn.network_hooks.clone(),
+                name: cs("openScreen"),
+                sig: msig([cn.server_player.sig.to_bytes(), cn.menu_provider.sig.to_bytes(), b"Ljava/util/function/Consumer;"], b"V"),
+            },
         }
     }
 }
@@ -85,6 +109,10 @@ pub struct ForgeMV {
     pub cap_provider: GlobalRef<'static>,
     pub get_cap: usize,
     pub invalidate_caps: usize,
+    pub forge_menu_type: GlobalRef<'static>,
+    pub forge_menu_type_create: usize,
+    pub network_hooks: GlobalRef<'static>,
+    pub network_hooks_open_screen: usize,
     pub client: Option<ForgeMVC>,
 }
 
@@ -111,6 +139,8 @@ impl ForgeMV {
         let reg_evt = load(&fcn.reg_evt);
         let lazy_opt = load(&fcn.lazy_opt);
         let cap_provider = load(&fcn.cap_provider);
+        let forge_menu_type = load(&fcn.forge_menu_type);
+        let network_hooks = load(&fcn.network_hooks);
         let dist = fml.static_field_1(c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
         let is_client = dist.call_bool_method(dist.get_object_class().get_method_id(c"isClient", c"()Z").unwrap(), &[]).unwrap();
         Self {
@@ -133,6 +163,10 @@ impl ForgeMV {
             get_cap: fmn.get_cap.get_method_id(&cap_provider).unwrap(),
             invalidate_caps: fmn.invalidate_caps.get_method_id(&cap_provider).unwrap(),
             cap_provider,
+            forge_menu_type_create: fmn.forge_menu_type_create.get_static_method_id(&forge_menu_type).unwrap(),
+            forge_menu_type,
+            network_hooks_open_screen: fmn.network_hooks_open_screen.get_static_method_id(&network_hooks).unwrap(),
+            network_hooks,
             client: is_client.then(|| {
                 let renderers_evt = load(&fcn.renderers_evt);
                 let renderers_evt_reg = msig([cn.tile_type.sig.to_bytes(), cn.tile_renderer_provider.sig.to_bytes()], b"V");
@@ -187,6 +221,17 @@ pub struct CN<T> {
     pub living_entity: T,
     pub dir: T,
     pub loot_builder: T,
+    pub abstract_container_menu: T,
+    pub inventory: T,
+    pub friendly_byte_buf: T,
+    pub menu_type: T,
+    pub server_player: T,
+    pub menu_provider: T,
+    pub player: T,
+    pub chat_component: T,
+    pub chat_mutable_component: T,
+    pub interaction_hand: T,
+    pub block_hit_result: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -245,6 +290,17 @@ impl CN<Arc<CSig>> {
             living_entity: b"net.minecraft.world.entity.LivingEntity",
             dir: b"net.minecraft.core.Direction",
             loot_builder: b"net.minecraft.world.level.storage.loot.LootParams$Builder",
+            abstract_container_menu: b"net.minecraft.world.inventory.AbstractContainerMenu",
+            inventory: b"net.minecraft.world.entity.player.Inventory",
+            friendly_byte_buf: b"net.minecraft.network.FriendlyByteBuf",
+            menu_type: b"net.minecraft.world.inventory.MenuType",
+            server_player: b"net.minecraft.server.level.ServerPlayer",
+            menu_provider: b"net.minecraft.world.MenuProvider",
+            player: b"net.minecraft.world.entity.player.Player",
+            chat_component: b"net.minecraft.network.chat.Component",
+            chat_mutable_component: b"net.minecraft.network.chat.MutableComponent",
+            interaction_hand: b"net.minecraft.world.InteractionHand",
+            block_hit_result: b"net.minecraft.world.phys.BlockHitResult",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -277,6 +333,7 @@ pub struct MN<T> {
     pub block_beh_get_shape: T,
     pub block_beh_get_drops: T,
     pub block_beh_on_place: T,
+    pub block_beh_use: T,
     pub block_item_init: T,
     pub block_item_place_block: T,
     pub block_getter_get_block_state: T,
@@ -315,6 +372,14 @@ pub struct MN<T> {
     pub level_set_block_and_update: T,
     pub level_update_neighbors_for_out_signal: T,
     pub level_is_client: T,
+    pub abstract_container_menu_init: T,
+    pub abstract_container_menu_still_valid: T,
+    pub abstract_container_menu_quick_move_stack: T,
+    pub menu_provider_create_menu: T,
+    pub menu_provider_get_display_name: T,
+    pub chat_component_translatable: T,
+    pub friendly_byte_buf_read_byte_array: T,
+    pub friendly_byte_buf_write_byte_array: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -387,6 +452,21 @@ impl MN<MSig> {
                 sig: msig(
                     [cn.block_state.sig.to_bytes(), cn.level.sig.to_bytes(), cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes(), b"Z"],
                     b"V",
+                ),
+            },
+            block_beh_use: MSig {
+                owner: cn.block_beh.clone(),
+                name: cs(b"m_6227_"),
+                sig: msig(
+                    [
+                        cn.block_state.sig.to_bytes(),
+                        cn.level.sig.to_bytes(),
+                        cn.block_pos.sig.to_bytes(),
+                        cn.player.sig.to_bytes(),
+                        cn.interaction_hand.sig.to_bytes(),
+                        cn.block_hit_result.sig.to_bytes(),
+                    ],
+                    cn.interaction_result.sig.to_bytes(),
                 ),
             },
             block_item_init: MSig {
@@ -479,6 +559,27 @@ impl MN<MSig> {
                 sig: msig([cn.block_pos.sig.to_bytes(), cn.block.sig.to_bytes()], b"V"),
             },
             level_is_client: MSig { owner: cn.level.clone(), name: cs("f_46443_"), sig: cs("Z") },
+            menu_provider_create_menu: MSig {
+                owner: cn.menu_provider.clone(),
+                name: cs("m_7208_"),
+                sig: msig([b"I", cn.inventory.sig.to_bytes(), cn.player.sig.to_bytes()], cn.abstract_container_menu.sig.to_bytes()),
+            },
+            menu_provider_get_display_name: MSig {
+                owner: cn.menu_provider.clone(),
+                name: cs("m_5446_"),
+                sig: msig([], cn.chat_component.sig.to_bytes()),
+            },
+            chat_component_translatable: MSig {
+                owner: cn.chat_component.clone(),
+                name: cs("m_237115_"),
+                sig: msig([B("Ljava/lang/String;")], cn.chat_mutable_component.sig.to_bytes()),
+            },
+            friendly_byte_buf_read_byte_array: MSig { owner: cn.friendly_byte_buf.clone(), name: cs("m_130052_"), sig: cs("()[B") },
+            friendly_byte_buf_write_byte_array: MSig {
+                owner: cn.friendly_byte_buf.clone(),
+                name: cs("m_130087_"),
+                sig: msig([B("[B")], cn.friendly_byte_buf.sig.to_bytes()),
+            },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -511,6 +612,21 @@ impl MN<MSig> {
                 sig: msig([cn.render_type.sig.to_bytes()], cn.vertex_consumer.sig.to_bytes()),
             },
             vertex_consumer_vertex: MSig { owner: cn.vertex_consumer.clone(), name: cs("m_5954_"), sig: cs("(FFFFFFFFFIIFFF)V") },
+            abstract_container_menu_init: MSig {
+                owner: cn.abstract_container_menu.clone(),
+                name: cs("<init>"),
+                sig: msig([cn.menu_type.sig.to_bytes(), b"I"], b"V"),
+            },
+            abstract_container_menu_still_valid: MSig {
+                owner: cn.abstract_container_menu.clone(),
+                name: cs("m_6875_"),
+                sig: msig([cn.player.sig.to_bytes()], b"Z"),
+            },
+            abstract_container_menu_quick_move_stack: MSig {
+                owner: cn.abstract_container_menu.clone(),
+                name: cs("m_7648_"),
+                sig: msig([cn.player.sig.to_bytes(), b"I"], cn.item_stack.sig.to_bytes()),
+            },
         };
         if !fmv.fml_naming_is_srg {
             let from = av.ldr.jni.new_utf(c"srg").unwrap();
@@ -575,6 +691,15 @@ pub struct MV {
     pub level_set_block_and_update: usize,
     pub level_update_neighbors_for_out_signal: usize,
     pub level_is_client: usize,
+    pub friendly_byte_buf_read_byte_array: usize,
+    pub friendly_byte_buf_write_byte_array: usize,
+    pub abstract_container_menu_init: usize,
+    pub chat_component: GlobalRef<'static>,
+    pub chat_component_translatable: usize,
+    pub interaction_result_pass: GlobalRef<'static>,
+    pub interaction_result_success: GlobalRef<'static>,
+    pub interaction_result_consume: GlobalRef<'static>,
+    pub server_player: GlobalRef<'static>,
     pub client: Option<MVC>,
 }
 
@@ -616,6 +741,10 @@ impl MV {
         let use_on_ctx = load(&cn.use_on_ctx);
         let dir = load(&cn.dir);
         let level = load(&cn.level);
+        let friendly_byte_buf = load(&cn.friendly_byte_buf);
+        let abstract_container_menu = load(&cn.abstract_container_menu);
+        let chat_component = load(&cn.chat_component);
+        let interaction_result = load(&cn.interaction_result);
         MV {
             base_tile_block_init: mn.base_tile_block_init.get_method_id(&base_tile_block).unwrap(),
             block_default_state: mn.block_default_state.get_method_id(&block).unwrap(),
@@ -666,6 +795,15 @@ impl MV {
             level_set_block_and_update: mn.level_set_block_and_update.get_method_id(&level).unwrap(),
             level_update_neighbors_for_out_signal: mn.level_update_neighbors_for_out_signal.get_method_id(&level).unwrap(),
             level_is_client: mn.level_is_client.get_field_id(&level).unwrap(),
+            friendly_byte_buf_read_byte_array: mn.friendly_byte_buf_read_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
+            friendly_byte_buf_write_byte_array: mn.friendly_byte_buf_write_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
+            abstract_container_menu_init: mn.abstract_container_menu_init.get_method_id(&abstract_container_menu).unwrap(),
+            chat_component_translatable: mn.chat_component_translatable.get_static_method_id(&chat_component).unwrap(),
+            chat_component,
+            interaction_result_pass: interaction_result.static_field_1(c"PASS", &cn.interaction_result.sig),
+            interaction_result_success: interaction_result.static_field_1(c"SUCCESS", &cn.interaction_result.sig),
+            interaction_result_consume: interaction_result.static_field_1(c"CONSUME", &cn.interaction_result.sig),
+            server_player: load(&cn.server_player),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);

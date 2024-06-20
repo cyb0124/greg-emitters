@@ -1,5 +1,6 @@
 use crate::{
     asm::*,
+    emitter_gui::{EmitterMenu, EmitterMenuType},
     global::{GlobalMtx, GlobalObjs, Tier},
     jvm::*,
     mapping_base::*,
@@ -34,6 +35,7 @@ pub struct EmitterBlocks {
     energy_container: ThinWrapper<EnergyContainer>,
     shapes: [GlobalRef<'static>; 6],
     shape_fallback: GlobalRef<'static>,
+    pub menu_type: GlobalRef<'static>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -84,7 +86,7 @@ impl Cleanable for Block {
 
 impl EmitterBlocks {
     pub fn init(jni: &'static JNI, lk: &GlobalMtx, reg_evt: &impl JRef<'static>) -> Self {
-        let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, tile_defs, .. } = objs();
+        let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, tile_defs, gui_defs, .. } = objs();
         let energy_container = ClassBuilder::new_2(jni, c"java/lang/Object")
             .interfaces([&*fcn.non_null_supplier.slash, &*gcn.energy_container.slash])
             .insns(&fmn.non_null_supplier_get, [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()])
@@ -105,6 +107,7 @@ impl EmitterBlocks {
             .native_2(&mn.block_beh_get_shape, get_shape_dyn())
             .native_2(&mn.block_beh_get_drops, get_drops_dyn())
             .native_2(&mn.block_beh_on_place, on_place_dyn())
+            .native_2(&mn.block_beh_use, on_use_dyn())
             .define_thin()
             .wrap::<Block>();
         let mut props = mv.block_beh_props.with_jni(jni).call_static_object_method(mv.block_beh_props_of, &[]).unwrap().unwrap();
@@ -138,6 +141,7 @@ impl EmitterBlocks {
             energy_container,
             shapes,
             shape_fallback: new_voxel_shape(jni, center.map(|x| x - RADIUS), center.map(|x| x + RADIUS)),
+            menu_type: gui_defs.new_menu_type(jni, &EmitterMenuType).new_global_ref().unwrap(),
         }
     }
 }
@@ -280,6 +284,17 @@ fn new_tile(jni: &'static JNI, _this: usize, pos: usize, state: usize) -> usize 
 #[dyn_abi]
 fn on_place(jni: &JNI, this: usize, _state: usize, level: usize, pos: usize, _old_state: usize, _moved_by_piston: bool) {
     BorrowedRef::new(jni, &level).call_void_method(objs().mv.level_update_neighbors_for_out_signal, &[pos, this]).unwrap()
+}
+
+#[dyn_abi]
+fn on_use(jni: &JNI, block: usize, state: usize, level: usize, pos: usize, player: usize, hand: usize, hit: usize) -> usize {
+    let GlobalObjs { mv, gui_defs, .. } = objs();
+    let level = BorrowedRef::new(jni, &level);
+    let player = BorrowedRef::new(jni, &player);
+    let false = level.level_is_client() else { return mv.interaction_result_success.raw };
+    let true = player.is_instance_of(mv.server_player.raw) else { return mv.interaction_result_pass.raw };
+    gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(EmitterMenu {}), Vec::new());
+    mv.interaction_result_consume.raw
 }
 
 //////////////////////////////////////

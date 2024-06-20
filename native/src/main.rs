@@ -25,6 +25,7 @@ macro_rules! dyn_abi {
 
 pub mod asm;
 mod emitter_blocks;
+mod emitter_gui;
 mod emitter_items;
 mod global;
 pub mod jvm;

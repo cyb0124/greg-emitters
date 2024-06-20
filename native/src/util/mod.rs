@@ -1,6 +1,7 @@
 pub mod cleaner;
 pub mod client;
 pub mod geometry;
+pub mod gui;
 pub mod mapping;
 pub mod nbt;
 pub mod tile;
