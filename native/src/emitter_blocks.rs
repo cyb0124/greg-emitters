@@ -1,11 +1,12 @@
 use crate::{
     asm::*,
     emitter_gui::{EmitterMenu, EmitterMenuType},
-    global::{GlobalMtx, GlobalObjs, Tier},
+    global::{warn, GlobalMtx, GlobalObjs, Tier},
     jvm::*,
     mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
+    ti,
     util::{
         cleaner::Cleanable,
         client::DrawContext,
@@ -236,15 +237,18 @@ impl Tile for Emitter {
 }
 
 impl TileSupplier for EmitterSupplier {
-    fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> LocalRef<'static> {
+    fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> Option<LocalRef<'static>> {
         let defs = lk.emitter_blocks.get().unwrap();
-        let tier = defs.block.read(&lk, state.block_state_get_block().borrow()).tier;
+        let block = state.block_state_get_block();
+        // Block and tile can mismatch when loading corrupted save.
+        let true = block.is_instance_of(defs.block.cls.cls.raw) else { return None };
+        let tier = defs.block.read(&lk, block.borrow()).tier;
         let energy_container = Arc::new(EnergyContainer { tile: OnceCell::new() });
         let energy_cap = defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap();
         let emitter = Arc::new(Emitter { tier, energy_cap, common: <_>::default(), server: <_>::default() });
         let tile = objs().tile_defs.new_tile(pos.jni, defs.tile_type.raw, pos.raw, state.raw, emitter);
         energy_container.tile.set(tile.new_weak_global_ref().unwrap()).ok().unwrap();
-        tile
+        Some(tile)
     }
 }
 
@@ -278,7 +282,7 @@ fn get_render_shape(_: &JNI, _this: usize, _state: usize) -> usize { objs().mv.r
 
 #[dyn_abi]
 fn new_tile(jni: &'static JNI, _this: usize, pos: usize, state: usize) -> usize {
-    EmitterSupplier.new_tile(&objs().mtx.lock(jni).unwrap(), BorrowedRef::new(jni, &pos), BorrowedRef::new(jni, &state)).into_raw()
+    EmitterSupplier.new_tile(&objs().mtx.lock(jni).unwrap(), BorrowedRef::new(jni, &pos), BorrowedRef::new(jni, &state)).map_or(0, |x| x.into_raw())
 }
 
 #[dyn_abi]

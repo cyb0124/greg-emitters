@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     asm::*,
-    global::{GlobalMtx, GlobalObjs},
+    global::{warn, GlobalMtx, GlobalObjs},
     jvm::*,
     mapping_base::{cs, CSig, MSig},
     objs,
@@ -35,7 +35,7 @@ pub trait TileExt<'a>: JRef<'a> {
 }
 
 pub trait TileSupplier: Send {
-    fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> LocalRef<'static>;
+    fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> Option<LocalRef<'static>>;
 }
 
 pub trait Tile: Cleanable {
@@ -104,7 +104,7 @@ impl GlobalMtx {
 fn tile_supplier_create(jni: &'static JNI, this: usize, pos: usize, state: usize) -> usize {
     let lk = objs().mtx.lock(jni).unwrap();
     let this = objs().tile_defs.tile_supplier.read(&lk, BorrowedRef::new(jni, &this));
-    this.new_tile(&lk, BorrowedRef::new(jni, &pos), BorrowedRef::new(jni, &state)).into_raw()
+    this.new_tile(&lk, BorrowedRef::new(jni, &pos), BorrowedRef::new(jni, &state)).map_or(0, |x| x.into_raw())
 }
 
 #[dyn_abi]

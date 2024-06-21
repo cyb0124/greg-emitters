@@ -7,8 +7,8 @@ use crate::{
 };
 use alloc::sync::Arc;
 
-pub struct EmitterMenu {}
 pub struct EmitterMenuType;
+pub struct EmitterMenu {}
 
 impl MenuType for EmitterMenuType {
     fn new_client(&self, data: &[u8]) -> Arc<dyn Menu> { Arc::new(EmitterMenu {}) }

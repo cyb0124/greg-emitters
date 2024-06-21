@@ -23,6 +23,8 @@ pub trait ClientExt<'a>: JRef<'a> {
 
 pub struct ClientDefs {
     pub tile_renderer: GlobalRef<'static>,
+    pub screen_constructor: GlobalRef<'static>,
+    screen: GlobalRef<'static>,
 }
 
 impl ClientDefs {
@@ -33,8 +35,29 @@ impl ClientDefs {
             .native_2(&mn.tile_renderer_render, render_tile_dyn())
             .insns(&mn.tile_renderer_provider_create, [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()])
             .define_empty();
-        Self { tile_renderer: tile_renderer.alloc_object().unwrap().new_global_ref().unwrap() }
+        let screen_constructor = ClassBuilder::new_1(av, namer, c"java/lang/Object")
+            .interfaces([&*cn.screen_constructor.slash])
+            .native_2(&mn.screen_constructor_create, screen_constructor_create_dyn())
+            .define_empty();
+        let screen = ClassBuilder::new_1(av, namer, &cn.abstract_container_screen.slash)
+            .native_2(&mn.abstract_container_screen_render_bg, screen_render_bg_dyn())
+            .define_empty();
+        Self {
+            tile_renderer: tile_renderer.alloc_object().unwrap().new_global_ref().unwrap(),
+            screen_constructor: screen_constructor.alloc_object().unwrap().new_global_ref().unwrap(),
+            screen,
+        }
     }
+}
+
+#[dyn_abi]
+fn screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, partial_tick: f32, mx: i32, my: i32) {}
+
+#[dyn_abi]
+fn screen_constructor_create(jni: &JNI, _: usize, menu: usize, inv: usize, title: usize) -> usize {
+    let defs = objs().client_defs.uref();
+    let mvc = objs().mv.client.uref();
+    defs.screen.with_jni(jni).new_object(mvc.abstract_container_screen_init, &[menu, inv, title]).unwrap().into_raw()
 }
 
 #[dyn_abi]

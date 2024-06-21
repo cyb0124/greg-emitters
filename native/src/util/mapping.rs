@@ -20,6 +20,7 @@ pub struct ForgeCN<T> {
     pub container_factory: T,
     pub forge_menu_type: T,
     pub network_hooks: T,
+    pub fml_client_setup_evt: T,
     // Client
     pub renderers_evt: T,
     pub atlas_evt: T,
@@ -43,6 +44,7 @@ impl ForgeCN<Arc<CSig>> {
             container_factory: b"net.minecraftforge.network.IContainerFactory",
             forge_menu_type: b"net.minecraftforge.common.extensions.IForgeMenuType",
             network_hooks: b"net.minecraftforge.network.NetworkHooks",
+            fml_client_setup_evt: b"net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent",
             // Client
             renderers_evt: b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers",
             atlas_evt: b"net.minecraftforge.client.event.TextureStitchEvent",
@@ -113,6 +115,7 @@ pub struct ForgeMV {
     pub forge_menu_type_create: usize,
     pub network_hooks: GlobalRef<'static>,
     pub network_hooks_open_screen: usize,
+    pub parallel_dispatch_evt_enqueue: usize,
     pub client: Option<ForgeMVC>,
 }
 
@@ -126,7 +129,7 @@ impl ForgeMV {
         let load = |csig: &Arc<CSig>| av.ldr.load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
         let cml = load(&fcn.cml);
         let naming_domain = load(&fcn.naming_domain);
-        let fml = av.ldr.load_class(&av.jv, c"net.minecraftforge.fml.loading.FMLLoader").unwrap().new_global_ref().unwrap();
+        let fml = av.ldr.load_class(&av.jv, c"net.minecraftforge.fml.loading.FMLLoader").unwrap();
         let fml_naming = fml.get_static_field_id(c"naming", c"Ljava/lang/String;").unwrap();
         let fml_naming_is_srg = &*fml.get_static_object_field(fml_naming).unwrap().utf_chars().unwrap() == b"srg";
         let fml_java_ctx = load(&fcn.fml_java_ctx);
@@ -141,6 +144,7 @@ impl ForgeMV {
         let cap_provider = load(&fcn.cap_provider);
         let forge_menu_type = load(&fcn.forge_menu_type);
         let network_hooks = load(&fcn.network_hooks);
+        let parallel_dispatch_evt = av.ldr.load_class(&av.jv, c"net.minecraftforge.fml.event.lifecycle.ParallelDispatchEvent").unwrap();
         let dist = fml.static_field_1(c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
         let is_client = dist.call_bool_method(dist.get_object_class().get_method_id(c"isClient", c"()Z").unwrap(), &[]).unwrap();
         Self {
@@ -167,6 +171,9 @@ impl ForgeMV {
             forge_menu_type,
             network_hooks_open_screen: fmn.network_hooks_open_screen.get_static_method_id(&network_hooks).unwrap(),
             network_hooks,
+            parallel_dispatch_evt_enqueue: parallel_dispatch_evt
+                .get_method_id(c"enqueueWork", c"(Ljava/lang/Runnable;)Ljava/util/concurrent/CompletableFuture;")
+                .unwrap(),
             client: is_client.then(|| {
                 let renderers_evt = load(&fcn.renderers_evt);
                 let renderers_evt_reg = msig([cn.tile_type.sig.to_bytes(), cn.tile_renderer_provider.sig.to_bytes()], b"V");
@@ -246,6 +253,11 @@ pub struct CN<T> {
     pub buffer_source: T,
     pub vertex_consumer: T,
     pub render_type: T,
+    pub menu_screens: T,
+    pub screen_constructor: T,
+    pub abstract_container_screen: T,
+    pub screen: T,
+    pub gui_graphics: T,
 }
 
 impl CN<Arc<CSig>> {
@@ -315,6 +327,11 @@ impl CN<Arc<CSig>> {
             buffer_source: b"net.minecraft.client.renderer.MultiBufferSource",
             vertex_consumer: b"com.mojang.blaze3d.vertex.VertexConsumer",
             render_type: b"net.minecraft.client.renderer.RenderType",
+            menu_screens: b"net.minecraft.client.gui.screens.MenuScreens",
+            screen_constructor: b"net.minecraft.client.gui.screens.MenuScreens$ScreenConstructor",
+            abstract_container_screen: b"net.minecraft.client.gui.screens.inventory.AbstractContainerScreen",
+            screen: b"net.minecraft.client.gui.screens.Screen",
+            gui_graphics: b"net.minecraft.client.gui.GuiGraphics",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -396,6 +413,10 @@ pub struct MN<T> {
     pub sheets_solid: T,
     pub buffer_source_get_buffer: T,
     pub vertex_consumer_vertex: T,
+    pub menu_screens_reg: T,
+    pub screen_constructor_create: T,
+    pub abstract_container_screen_init: T,
+    pub abstract_container_screen_render_bg: T,
 }
 
 impl MN<MSig> {
@@ -627,6 +648,29 @@ impl MN<MSig> {
                 name: cs("m_7648_"),
                 sig: msig([cn.player.sig.to_bytes(), b"I"], cn.item_stack.sig.to_bytes()),
             },
+            menu_screens_reg: MSig {
+                owner: cn.menu_screens.clone(),
+                name: cs("m_96206_"),
+                sig: msig([cn.menu_type.sig.to_bytes(), cn.screen_constructor.sig.to_bytes()], b"V"),
+            },
+            screen_constructor_create: MSig {
+                owner: cn.screen_constructor.clone(),
+                name: cs("m_96214_"),
+                sig: msig(
+                    [cn.abstract_container_menu.sig.to_bytes(), cn.inventory.sig.to_bytes(), cn.chat_component.sig.to_bytes()],
+                    cn.screen.sig.to_bytes(),
+                ),
+            },
+            abstract_container_screen_init: MSig {
+                owner: cn.abstract_container_screen.clone(),
+                name: cs("<init>"),
+                sig: msig([cn.abstract_container_menu.sig.to_bytes(), cn.inventory.sig.to_bytes(), cn.chat_component.sig.to_bytes()], b"V"),
+            },
+            abstract_container_screen_render_bg: MSig {
+                owner: cn.abstract_container_screen.clone(),
+                name: cs("m_7286_"),
+                sig: msig([cn.gui_graphics.sig.to_bytes(), b"FII"], b"V"),
+            },
         };
         if !fmv.fml_naming_is_srg {
             let from = av.ldr.jni.new_utf(c"srg").unwrap();
@@ -716,6 +760,9 @@ pub struct MVC {
     pub sprite_v1: usize,
     pub buffer_source_get_buffer: usize,
     pub vertex_consumer_vertex: usize,
+    pub menu_screens: GlobalRef<'static>,
+    pub menu_screens_reg: usize,
+    pub abstract_container_screen_init: usize,
 }
 
 impl MV {
@@ -812,6 +859,8 @@ impl MV {
                 let sprite = load(&cn.sprite);
                 let buffer_source = load(&cn.buffer_source);
                 let vertex_consumer = load(&cn.vertex_consumer);
+                let menu_screens = load(&cn.menu_screens);
+                let abstract_container_screen = load(&cn.abstract_container_screen);
                 MVC {
                     pose_pose: mn.pose_pose.get_field_id(&pose).unwrap(),
                     pose_stack_last: mn.pose_stack_last.get_method_id(&pose_stack).unwrap(),
@@ -825,6 +874,9 @@ impl MV {
                     sprite_v1: mn.sprite_v1.get_field_id(&sprite).unwrap(),
                     buffer_source_get_buffer: mn.buffer_source_get_buffer.get_method_id(&buffer_source).unwrap(),
                     vertex_consumer_vertex: mn.vertex_consumer_vertex.get_method_id(&vertex_consumer).unwrap(),
+                    menu_screens_reg: mn.menu_screens_reg.get_static_method_id(&menu_screens).unwrap(),
+                    menu_screens,
+                    abstract_container_screen_init: mn.abstract_container_screen_init.get_method_id(&abstract_container_screen).unwrap(),
                 }
             }),
         }

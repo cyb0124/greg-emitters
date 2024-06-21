@@ -9,14 +9,17 @@ pub const MOD_ID: &str = "greg_emitters";
 pub const EMITTER_ID: &str = "emitter";
 
 pub fn init() {
-    ti().add_capabilities(CAN_RETRANSFORM_CLASSES).unwrap();
+    let GlobalObjs { av, fcn, fmv, gcn, .. } = objs();
+    ti().add_capabilities(CAN_RETRANSFORM_CLASSES | CAN_RETRANSFORM_ANY_CLASSES).unwrap();
     ti().set_event_callbacks(&[0, 0, 0, 0, class_file_load_hook_dyn()]).unwrap();
     ti().set_event_notification_mode(true, JVMTI_EVENT_CLASS_FILE_LOAD_HOOK, 0).unwrap();
-    let GlobalObjs { fcn, fmv, .. } = objs();
+    let cls_list = [&gcn.reg, &gcn.creative_tab_items_gen, &gcn.material_block_renderer].map(|cn| av.ldr.load_class(&av.jv, &cn.dot).unwrap());
+    ti().retransform_classes(&Vec::from_iter(cls_list.iter().map(|x| x.raw))).unwrap();
     add_forge_listener(&fmv.mod_evt_bus, fcn.reg_evt.sig.to_bytes(), on_forge_reg_dyn());
     if fmv.client.is_some() {
         add_forge_listener(&fmv.mod_evt_bus, fcn.atlas_evt.sig.to_bytes(), on_forge_atlas_dyn());
-        add_forge_listener(&fmv.mod_evt_bus, fcn.renderers_evt.sig.to_bytes(), on_forge_renderers_dyn())
+        add_forge_listener(&fmv.mod_evt_bus, fcn.renderers_evt.sig.to_bytes(), on_forge_renderers_dyn());
+        add_forge_listener(&fmv.mod_evt_bus, fcn.fml_client_setup_evt.sig.to_bytes(), on_forge_client_setup_dyn())
     }
 }
 
@@ -61,6 +64,8 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
         lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &lk, &evt));
     } else if key.equals(&av.jv, fmv.reg_key_tile_types.raw).unwrap() {
         forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
+    } else if key.equals(&av.jv, fmv.reg_key_menu_types.raw).unwrap() {
+        forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().menu_type.raw)
     }
 }
 
@@ -93,6 +98,26 @@ fn on_forge_atlas(jni: &'static JNI, _: usize, evt: usize) {
             tier.emitter_sprite = Some(Sprite::new(&atlas, c"gtceu", &cs(format!("item/{}_emitter", tier.name))))
         }
     }
+}
+
+#[dyn_abi]
+fn on_forge_client_setup(jni: &'static JNI, _: usize, evt: usize) {
+    let task = ClassBuilder::new_2(jni, c"java/lang/Object")
+        .interfaces([c"java/lang/Runnable"])
+        .native_1(c"run", c"()V", client_setup_task_run_dyn())
+        .define_empty()
+        .alloc_object()
+        .unwrap();
+    BorrowedRef::new(jni, &evt).call_object_method(objs().fmv.parallel_dispatch_evt_enqueue, &[task.raw]).unwrap();
+}
+
+#[dyn_abi]
+fn client_setup_task_run(jni: &JNI, _: usize) {
+    let mvc = objs().mv.client.uref();
+    let client = objs().client_defs.uref();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let defs = lk.emitter_blocks.get().unwrap();
+    mvc.menu_screens.with_jni(jni).call_static_void_method(mvc.menu_screens_reg, &[defs.menu_type.raw, client.screen_constructor.raw]).unwrap();
 }
 
 fn patch_greg_reg<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {

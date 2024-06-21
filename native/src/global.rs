@@ -5,7 +5,7 @@ use crate::{
     jvm::*,
     mapping_base::*,
     objs,
-    registry::{add_greg_dyn_resource, EMITTER_ID},
+    registry::{add_greg_dyn_resource, EMITTER_ID, MOD_ID},
     ti,
     util::{
         cleaner::Cleaner,
@@ -44,6 +44,8 @@ pub struct GlobalObjs {
     pub greg_creative_tab_stub: MSig,
     pub greg_reinit_models_stub: MSig,
     pub mtx: JMutex<'static, GlobalMtx>,
+    logger: GlobalRef<'static>,
+    logger_warn: usize,
 }
 
 pub struct Tier {
@@ -96,6 +98,11 @@ impl GlobalObjs {
         cb.stub(&greg_reinit_models_stub, greg_reinit_models_stub_dyn());
         cb.define_empty();
 
+        // Logger
+        let logger_factory = av.ldr.load_class(&av.jv, c"org.slf4j.LoggerFactory").unwrap();
+        let get_logger = logger_factory.get_static_method_id(c"getLogger", c"(Ljava/lang/String;)Lorg/slf4j/Logger;").unwrap();
+        let logger = logger_factory.call_static_object_method(get_logger, &[av.ldr.jni.new_utf(&cs(MOD_ID)).unwrap().raw]).unwrap().unwrap();
+
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
             client_defs: mv.client.fmap(|_| ClientDefs::init(&av, &namer, &cn, &mn)),
@@ -116,8 +123,14 @@ impl GlobalObjs {
             greg_reg_item_stub,
             greg_creative_tab_stub,
             greg_reinit_models_stub,
+            logger: logger.new_global_ref().unwrap(),
+            logger_warn: logger.get_object_class().get_method_id(c"warn", c"(Ljava/lang/String;)V").unwrap(),
         }
     }
+}
+
+pub fn warn(jni: &JNI, text: impl Into<Vec<u8>>) {
+    objs().logger.with_jni(jni).call_void_method(objs().logger_warn, &[jni.new_utf(&cs(text.into())).unwrap().raw]).unwrap()
 }
 
 #[dyn_abi]
