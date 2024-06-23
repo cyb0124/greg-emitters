@@ -24,7 +24,7 @@ pub trait ClientExt<'a>: JRef<'a> {
 pub struct ClientDefs {
     pub tile_renderer: GlobalRef<'static>,
     pub screen_constructor: GlobalRef<'static>,
-    screen: GlobalRef<'static>,
+    container_screen: GlobalRef<'static>,
 }
 
 impl ClientDefs {
@@ -39,25 +39,64 @@ impl ClientDefs {
             .interfaces([&*cn.screen_constructor.slash])
             .native_2(&mn.screen_constructor_create, screen_constructor_create_dyn())
             .define_empty();
-        let screen = ClassBuilder::new_1(av, namer, &cn.abstract_container_screen.slash)
-            .native_2(&mn.abstract_container_screen_render_bg, screen_render_bg_dyn())
+        let container_screen = ClassBuilder::new_1(av, namer, &cn.container_screen.slash)
+            .native_2(&mn.container_screen_render_bg, container_screen_render_bg_dyn())
+            .native_2(&mn.container_screen_render_labels, container_screen_render_labels_dyn())
+            .native_2(&mn.container_screen_minit, container_screen_minit_dyn())
             .define_empty();
         Self {
             tile_renderer: tile_renderer.alloc_object().unwrap().new_global_ref().unwrap(),
             screen_constructor: screen_constructor.alloc_object().unwrap().new_global_ref().unwrap(),
-            screen,
+            container_screen,
         }
     }
 }
 
 #[dyn_abi]
-fn screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, partial_tick: f32, mx: i32, my: i32) {}
+fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, partial_tick: f32, mx: i32, my: i32) {}
+
+#[dyn_abi]
+fn container_screen_minit(jni: &JNI, this: usize) {
+    let mvc = objs().mv.client.uref();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let this = BorrowedRef::new(jni, &this);
+    let menu = this.get_object_field(mvc.container_screen_menu).unwrap();
+    let menu = objs().gui_defs.menu.read(&lk, menu.borrow());
+    let max_size = vector![this.get_int_field(mvc.container_screen_width), this.get_int_field(mvc.container_screen_height)];
+    let pos = (max_size - menu.get_size()) / 2 + menu.get_offset();
+    this.set_int_field(mvc.container_screen_left, pos.x);
+    this.set_int_field(mvc.container_screen_top, pos.y)
+}
+
+#[dyn_abi]
+fn container_screen_render_labels(jni: &JNI, this: usize, gui_graphics: usize, mx: i32, my: i32) {
+    let mvc = objs().mv.client.uref();
+    let this = BorrowedRef::new(jni, &this);
+    BorrowedRef::new(jni, &gui_graphics)
+        .call_int_method(
+            mvc.gui_graphics_draw_string,
+            &[
+                this.get_object_field(mvc.container_screen_font).unwrap().raw,
+                this.get_object_field(mvc.container_screen_title).unwrap().raw,
+                this.get_int_field(mvc.container_screen_title_x) as _,
+                this.get_int_field(mvc.container_screen_title_y) as _,
+                0x404040,
+                0,
+            ],
+        )
+        .unwrap();
+}
 
 #[dyn_abi]
 fn screen_constructor_create(jni: &JNI, _: usize, menu: usize, inv: usize, title: usize) -> usize {
     let defs = objs().client_defs.uref();
     let mvc = objs().mv.client.uref();
-    defs.screen.with_jni(jni).new_object(mvc.abstract_container_screen_init, &[menu, inv, title]).unwrap().into_raw()
+    let screen = defs.container_screen.with_jni(jni).new_object(mvc.container_screen_init, &[menu, inv, title]).unwrap();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let size = objs().gui_defs.menu.read(&lk, BorrowedRef::new(jni, &menu)).get_size();
+    screen.set_int_field(mvc.container_screen_img_width, size.x);
+    screen.set_int_field(mvc.container_screen_img_height, size.y);
+    screen.into_raw()
 }
 
 #[dyn_abi]

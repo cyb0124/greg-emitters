@@ -75,7 +75,7 @@ impl ForgeMN {
             container_factory_create: MSig {
                 owner: fcn.container_factory.clone(),
                 name: cs("create"),
-                sig: msig([b"I", cn.inventory.sig.to_bytes(), cn.friendly_byte_buf.sig.to_bytes()], cn.abstract_container_menu.sig.to_bytes()),
+                sig: msig([b"I", cn.inventory.sig.to_bytes(), cn.friendly_byte_buf.sig.to_bytes()], cn.container_menu.sig.to_bytes()),
             },
             forge_menu_type_create: MSig {
                 owner: fcn.forge_menu_type.clone(),
@@ -228,7 +228,7 @@ pub struct CN<T> {
     pub living_entity: T,
     pub dir: T,
     pub loot_builder: T,
-    pub abstract_container_menu: T,
+    pub container_menu: T,
     pub inventory: T,
     pub friendly_byte_buf: T,
     pub menu_type: T,
@@ -255,9 +255,10 @@ pub struct CN<T> {
     pub render_type: T,
     pub menu_screens: T,
     pub screen_constructor: T,
-    pub abstract_container_screen: T,
+    pub container_screen: T,
     pub screen: T,
     pub gui_graphics: T,
+    pub font: T,
 }
 
 impl CN<Arc<CSig>> {
@@ -302,7 +303,7 @@ impl CN<Arc<CSig>> {
             living_entity: b"net.minecraft.world.entity.LivingEntity",
             dir: b"net.minecraft.core.Direction",
             loot_builder: b"net.minecraft.world.level.storage.loot.LootParams$Builder",
-            abstract_container_menu: b"net.minecraft.world.inventory.AbstractContainerMenu",
+            container_menu: b"net.minecraft.world.inventory.AbstractContainerMenu",
             inventory: b"net.minecraft.world.entity.player.Inventory",
             friendly_byte_buf: b"net.minecraft.network.FriendlyByteBuf",
             menu_type: b"net.minecraft.world.inventory.MenuType",
@@ -329,9 +330,10 @@ impl CN<Arc<CSig>> {
             render_type: b"net.minecraft.client.renderer.RenderType",
             menu_screens: b"net.minecraft.client.gui.screens.MenuScreens",
             screen_constructor: b"net.minecraft.client.gui.screens.MenuScreens$ScreenConstructor",
-            abstract_container_screen: b"net.minecraft.client.gui.screens.inventory.AbstractContainerScreen",
+            container_screen: b"net.minecraft.client.gui.screens.inventory.AbstractContainerScreen",
             screen: b"net.minecraft.client.gui.screens.Screen",
             gui_graphics: b"net.minecraft.client.gui.GuiGraphics",
+            font: b"net.minecraft.client.gui.Font",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -389,9 +391,9 @@ pub struct MN<T> {
     pub level_set_block_and_update: T,
     pub level_update_neighbors_for_out_signal: T,
     pub level_is_client: T,
-    pub abstract_container_menu_init: T,
-    pub abstract_container_menu_still_valid: T,
-    pub abstract_container_menu_quick_move_stack: T,
+    pub container_menu_init: T,
+    pub container_menu_still_valid: T,
+    pub container_menu_quick_move_stack: T,
     pub menu_provider_create_menu: T,
     pub menu_provider_get_display_name: T,
     pub chat_component_translatable: T,
@@ -415,8 +417,22 @@ pub struct MN<T> {
     pub vertex_consumer_vertex: T,
     pub menu_screens_reg: T,
     pub screen_constructor_create: T,
-    pub abstract_container_screen_init: T,
-    pub abstract_container_screen_render_bg: T,
+    pub container_screen_init: T,
+    pub container_screen_minit: T,
+    pub container_screen_img_width: T,
+    pub container_screen_img_height: T,
+    pub container_screen_title_x: T,
+    pub container_screen_title_y: T,
+    pub container_screen_title: T,
+    pub container_screen_font: T,
+    pub container_screen_width: T,
+    pub container_screen_height: T,
+    pub container_screen_left: T,
+    pub container_screen_top: T,
+    pub container_screen_menu: T,
+    pub container_screen_render_bg: T,
+    pub container_screen_render_labels: T,
+    pub gui_graphics_draw_string: T,
 }
 
 impl MN<MSig> {
@@ -583,7 +599,7 @@ impl MN<MSig> {
             menu_provider_create_menu: MSig {
                 owner: cn.menu_provider.clone(),
                 name: cs("m_7208_"),
-                sig: msig([b"I", cn.inventory.sig.to_bytes(), cn.player.sig.to_bytes()], cn.abstract_container_menu.sig.to_bytes()),
+                sig: msig([b"I", cn.inventory.sig.to_bytes(), cn.player.sig.to_bytes()], cn.container_menu.sig.to_bytes()),
             },
             menu_provider_get_display_name: MSig {
                 owner: cn.menu_provider.clone(),
@@ -633,18 +649,10 @@ impl MN<MSig> {
                 sig: msig([cn.render_type.sig.to_bytes()], cn.vertex_consumer.sig.to_bytes()),
             },
             vertex_consumer_vertex: MSig { owner: cn.vertex_consumer.clone(), name: cs("m_5954_"), sig: cs("(FFFFFFFFFIIFFF)V") },
-            abstract_container_menu_init: MSig {
-                owner: cn.abstract_container_menu.clone(),
-                name: cs("<init>"),
-                sig: msig([cn.menu_type.sig.to_bytes(), b"I"], b"V"),
-            },
-            abstract_container_menu_still_valid: MSig {
-                owner: cn.abstract_container_menu.clone(),
-                name: cs("m_6875_"),
-                sig: msig([cn.player.sig.to_bytes()], b"Z"),
-            },
-            abstract_container_menu_quick_move_stack: MSig {
-                owner: cn.abstract_container_menu.clone(),
+            container_menu_init: MSig { owner: cn.container_menu.clone(), name: cs("<init>"), sig: msig([cn.menu_type.sig.to_bytes(), b"I"], b"V") },
+            container_menu_still_valid: MSig { owner: cn.container_menu.clone(), name: cs("m_6875_"), sig: msig([cn.player.sig.to_bytes()], b"Z") },
+            container_menu_quick_move_stack: MSig {
+                owner: cn.container_menu.clone(),
                 name: cs("m_7648_"),
                 sig: msig([cn.player.sig.to_bytes(), b"I"], cn.item_stack.sig.to_bytes()),
             },
@@ -657,19 +665,41 @@ impl MN<MSig> {
                 owner: cn.screen_constructor.clone(),
                 name: cs("m_96214_"),
                 sig: msig(
-                    [cn.abstract_container_menu.sig.to_bytes(), cn.inventory.sig.to_bytes(), cn.chat_component.sig.to_bytes()],
+                    [cn.container_menu.sig.to_bytes(), cn.inventory.sig.to_bytes(), cn.chat_component.sig.to_bytes()],
                     cn.screen.sig.to_bytes(),
                 ),
             },
-            abstract_container_screen_init: MSig {
-                owner: cn.abstract_container_screen.clone(),
+            container_screen_init: MSig {
+                owner: cn.container_screen.clone(),
                 name: cs("<init>"),
-                sig: msig([cn.abstract_container_menu.sig.to_bytes(), cn.inventory.sig.to_bytes(), cn.chat_component.sig.to_bytes()], b"V"),
+                sig: msig([cn.container_menu.sig.to_bytes(), cn.inventory.sig.to_bytes(), cn.chat_component.sig.to_bytes()], b"V"),
             },
-            abstract_container_screen_render_bg: MSig {
-                owner: cn.abstract_container_screen.clone(),
+            container_screen_minit: MSig { owner: cn.container_screen.clone(), name: cs("m_7856_"), sig: cs("()V") },
+            container_screen_img_width: MSig { owner: cn.container_screen.clone(), name: cs("f_97726_"), sig: cs("I") },
+            container_screen_img_height: MSig { owner: cn.container_screen.clone(), name: cs("f_97727_"), sig: cs("I") },
+            container_screen_title_x: MSig { owner: cn.container_screen.clone(), name: cs("f_97728_"), sig: cs("I") },
+            container_screen_title_y: MSig { owner: cn.container_screen.clone(), name: cs("f_97729_"), sig: cs("I") },
+            container_screen_title: MSig { owner: cn.container_screen.clone(), name: cs("f_96539_"), sig: cs(cn.chat_component.sig.clone()) },
+            container_screen_font: MSig { owner: cn.container_screen.clone(), name: cs("f_96547_"), sig: cs(cn.font.sig.clone()) },
+            container_screen_width: MSig { owner: cn.container_screen.clone(), name: cs("f_96543_"), sig: cs("I") },
+            container_screen_height: MSig { owner: cn.container_screen.clone(), name: cs("f_96544_"), sig: cs("I") },
+            container_screen_left: MSig { owner: cn.container_screen.clone(), name: cs("f_97735_"), sig: cs("I") },
+            container_screen_top: MSig { owner: cn.container_screen.clone(), name: cs("f_97736_"), sig: cs("I") },
+            container_screen_menu: MSig { owner: cn.container_screen.clone(), name: cs("f_97732_"), sig: cn.container_menu.sig.clone() },
+            container_screen_render_bg: MSig {
+                owner: cn.container_screen.clone(),
                 name: cs("m_7286_"),
                 sig: msig([cn.gui_graphics.sig.to_bytes(), b"FII"], b"V"),
+            },
+            container_screen_render_labels: MSig {
+                owner: cn.container_screen.clone(),
+                name: cs("m_280003_"),
+                sig: msig([cn.gui_graphics.sig.to_bytes(), b"II"], b"V"),
+            },
+            gui_graphics_draw_string: MSig {
+                owner: cn.gui_graphics.clone(),
+                name: cs("m_280614_"),
+                sig: msig([cn.font.sig.to_bytes(), cn.chat_component.sig.to_bytes(), b"IIIZ"], b"I"),
             },
         };
         if !fmv.fml_naming_is_srg {
@@ -737,7 +767,7 @@ pub struct MV {
     pub level_is_client: usize,
     pub friendly_byte_buf_read_byte_array: usize,
     pub friendly_byte_buf_write_byte_array: usize,
-    pub abstract_container_menu_init: usize,
+    pub container_menu_init: usize,
     pub chat_component: GlobalRef<'static>,
     pub chat_component_translatable: usize,
     pub interaction_result_pass: GlobalRef<'static>,
@@ -762,7 +792,19 @@ pub struct MVC {
     pub vertex_consumer_vertex: usize,
     pub menu_screens: GlobalRef<'static>,
     pub menu_screens_reg: usize,
-    pub abstract_container_screen_init: usize,
+    pub container_screen_init: usize,
+    pub container_screen_img_width: usize,
+    pub container_screen_img_height: usize,
+    pub container_screen_title_x: usize,
+    pub container_screen_title_y: usize,
+    pub container_screen_title: usize,
+    pub container_screen_font: usize,
+    pub container_screen_width: usize,
+    pub container_screen_height: usize,
+    pub container_screen_left: usize,
+    pub container_screen_top: usize,
+    pub container_screen_menu: usize,
+    pub gui_graphics_draw_string: usize,
 }
 
 impl MV {
@@ -789,7 +831,7 @@ impl MV {
         let dir = load(&cn.dir);
         let level = load(&cn.level);
         let friendly_byte_buf = load(&cn.friendly_byte_buf);
-        let abstract_container_menu = load(&cn.abstract_container_menu);
+        let container_menu = load(&cn.container_menu);
         let chat_component = load(&cn.chat_component);
         let interaction_result = load(&cn.interaction_result);
         MV {
@@ -844,7 +886,7 @@ impl MV {
             level_is_client: mn.level_is_client.get_field_id(&level).unwrap(),
             friendly_byte_buf_read_byte_array: mn.friendly_byte_buf_read_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
             friendly_byte_buf_write_byte_array: mn.friendly_byte_buf_write_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
-            abstract_container_menu_init: mn.abstract_container_menu_init.get_method_id(&abstract_container_menu).unwrap(),
+            container_menu_init: mn.container_menu_init.get_method_id(&container_menu).unwrap(),
             chat_component_translatable: mn.chat_component_translatable.get_static_method_id(&chat_component).unwrap(),
             chat_component,
             interaction_result_pass: interaction_result.static_field_1(c"PASS", &cn.interaction_result.sig),
@@ -860,7 +902,8 @@ impl MV {
                 let buffer_source = load(&cn.buffer_source);
                 let vertex_consumer = load(&cn.vertex_consumer);
                 let menu_screens = load(&cn.menu_screens);
-                let abstract_container_screen = load(&cn.abstract_container_screen);
+                let container_screen = load(&cn.container_screen);
+                let gui_graphics = load(&cn.gui_graphics);
                 MVC {
                     pose_pose: mn.pose_pose.get_field_id(&pose).unwrap(),
                     pose_stack_last: mn.pose_stack_last.get_method_id(&pose_stack).unwrap(),
@@ -876,7 +919,19 @@ impl MV {
                     vertex_consumer_vertex: mn.vertex_consumer_vertex.get_method_id(&vertex_consumer).unwrap(),
                     menu_screens_reg: mn.menu_screens_reg.get_static_method_id(&menu_screens).unwrap(),
                     menu_screens,
-                    abstract_container_screen_init: mn.abstract_container_screen_init.get_method_id(&abstract_container_screen).unwrap(),
+                    container_screen_init: mn.container_screen_init.get_method_id(&container_screen).unwrap(),
+                    container_screen_img_width: mn.container_screen_img_width.get_field_id(&container_screen).unwrap(),
+                    container_screen_img_height: mn.container_screen_img_height.get_field_id(&container_screen).unwrap(),
+                    container_screen_title_x: mn.container_screen_title_x.get_field_id(&container_screen).unwrap(),
+                    container_screen_title_y: mn.container_screen_title_y.get_field_id(&container_screen).unwrap(),
+                    container_screen_title: mn.container_screen_title.get_field_id(&container_screen).unwrap(),
+                    container_screen_font: mn.container_screen_font.get_field_id(&container_screen).unwrap(),
+                    container_screen_width: mn.container_screen_width.get_field_id(&container_screen).unwrap(),
+                    container_screen_height: mn.container_screen_height.get_field_id(&container_screen).unwrap(),
+                    container_screen_left: mn.container_screen_left.get_field_id(&container_screen).unwrap(),
+                    container_screen_top: mn.container_screen_top.get_field_id(&container_screen).unwrap(),
+                    container_screen_menu: mn.container_screen_menu.get_field_id(&container_screen).unwrap(),
+                    gui_graphics_draw_string: mn.gui_graphics_draw_string.get_method_id(&gui_graphics).unwrap(),
                 }
             }),
         }

@@ -13,8 +13,12 @@ use crate::{
 use alloc::{sync::Arc, vec::Vec};
 use core::cell::RefCell;
 use macros::dyn_abi;
+use nalgebra::Vector2;
 
-pub trait Menu: Cleanable {}
+pub trait Menu: Cleanable {
+    fn get_size(&self) -> Vector2<i32>;
+    fn get_offset(&self) -> Vector2<i32>;
+}
 
 pub trait MenuType: Send {
     fn new_client(&self, data: &[u8]) -> Arc<dyn Menu>;
@@ -22,7 +26,7 @@ pub trait MenuType: Send {
 }
 
 pub struct GUIDefs {
-    menu: FatWrapper<dyn Menu>,
+    pub menu: FatWrapper<dyn Menu>,
     container_factory: FatWrapper<dyn MenuType>,
     menu_provider: ThinWrapper<MenuProvider>,
 }
@@ -46,9 +50,9 @@ impl Cleanable for MenuProvider {
 
 impl GUIDefs {
     pub fn init(av: &AV<'static>, cn: &CN<Arc<CSig>>, mn: &MN<MSig>, fcn: &ForgeCN<Arc<CSig>>, fmn: &ForgeMN, namer: &ClassNamer) -> Self {
-        let menu = ClassBuilder::new_1(av, namer, &cn.abstract_container_menu.slash)
-            .native_2(&mn.abstract_container_menu_still_valid, still_valid_dyn())
-            .native_2(&mn.abstract_container_menu_quick_move_stack, quick_move_stack_dyn())
+        let menu = ClassBuilder::new_1(av, namer, &cn.container_menu.slash)
+            .native_2(&mn.container_menu_still_valid, still_valid_dyn())
+            .native_2(&mn.container_menu_quick_move_stack, quick_move_stack_dyn())
             .define_fat()
             .wrap::<dyn Menu>();
         let container_factory = ClassBuilder::new_1(av, namer, c"java/lang/Object")
@@ -98,7 +102,7 @@ fn container_factory_create(jni: &JNI, this: usize, id: i32, _inv: usize, data: 
     let data = BorrowedRef::new(jni, &data).call_object_method(mv.friendly_byte_buf_read_byte_array, &[]).unwrap().unwrap();
     let menu = this.new_client(&data.crit_elems().unwrap());
     let menu = gui_defs.menu.new_obj(jni, menu);
-    menu.call_void_method(mv.abstract_container_menu_init, &[this.raw(&lk), id as _]).unwrap();
+    menu.call_void_method(mv.container_menu_init, &[this.raw(&lk), id as _]).unwrap();
     menu.into_raw()
 }
 
@@ -108,7 +112,7 @@ fn menu_provider_create_menu(jni: &JNI, this: usize, id: i32, _inv: usize, _play
     let lk = mtx.lock(jni).unwrap();
     let this = gui_defs.menu_provider.read(&lk, BorrowedRef::new(jni, &this));
     let menu = gui_defs.menu.new_obj(jni, this.menu.borrow_mut().take().unwrap());
-    menu.call_void_method(mv.abstract_container_menu_init, &[this.menu_type.raw(&lk), id as _]).unwrap();
+    menu.call_void_method(mv.container_menu_init, &[this.menu_type.raw(&lk), id as _]).unwrap();
     menu.into_raw()
 }
 
