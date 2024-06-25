@@ -240,6 +240,7 @@ pub struct CN<T> {
     pub formatted_char_seq: T,
     pub interaction_hand: T,
     pub block_hit_result: T,
+    pub entity: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -326,6 +327,7 @@ impl CN<Arc<CSig>> {
             formatted_char_seq: b"net.minecraft.util.FormattedCharSequence",
             interaction_hand: b"net.minecraft.world.InteractionHand",
             block_hit_result: b"net.minecraft.world.phys.BlockHitResult",
+            entity: b"net.minecraft.world.entity.Entity",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -423,6 +425,8 @@ pub struct MN<T> {
     pub chat_component_to_formatted: T,
     pub friendly_byte_buf_read_byte_array: T,
     pub friendly_byte_buf_write_byte_array: T,
+    pub inventory_player: T,
+    pub entity_level: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -672,6 +676,8 @@ impl MN<MSig> {
                 name: cs("m_130087_"),
                 sig: msig([B("[B")], cn.friendly_byte_buf.sig.to_bytes()),
             },
+            inventory_player: MSig { owner: cn.inventory.clone(), name: cs("f_35978_"), sig: cn.player.sig.clone() },
+            entity_level: MSig { owner: cn.entity.clone(), name: cs("m_9236_"), sig: msig([], cn.level.sig.to_bytes()) },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -868,6 +874,8 @@ pub struct MV {
     pub interaction_result_success: GlobalRef<'static>,
     pub interaction_result_consume: GlobalRef<'static>,
     pub server_player: GlobalRef<'static>,
+    pub inventory_player: usize,
+    pub entity_level: usize,
     pub client: Option<MVC>,
 }
 
@@ -1012,6 +1020,8 @@ impl MV {
             interaction_result_success: interaction_result.static_field_1(c"SUCCESS", &cn.interaction_result.sig),
             interaction_result_consume: interaction_result.static_field_1(c"CONSUME", &cn.interaction_result.sig),
             server_player: load(&cn.server_player),
+            inventory_player: mn.inventory_player.get_field_id(&load(&cn.inventory)).unwrap(),
+            entity_level: mn.entity_level.get_method_id(&load(&cn.entity)).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);

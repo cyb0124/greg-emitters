@@ -72,7 +72,7 @@ fn place_block(jni: &'static JNI, this: usize, ctx: usize, state: usize) -> bool
     let mut pos = ctx.call_object_method(mv.use_on_ctx_get_clicked_pos, &[]).unwrap().unwrap();
     let dir_obj = ctx.call_object_method(mv.use_on_ctx_get_clicked_face, &[]).unwrap().unwrap();
     let dir = dir_obj.read_dir();
-    let tile = level.tile_at(pos.raw);
+    let tile = level.tile_at(pos.raw).unwrap();
     let lk = mtx.lock(jni).unwrap();
     lk.read_tile::<Emitter>(tile.borrow()).common.borrow_mut().dir = Some(dir);
     let opp = dir ^ 1;

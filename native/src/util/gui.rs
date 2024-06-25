@@ -38,7 +38,7 @@ pub trait Menu: Cleanable {
 }
 
 pub trait MenuType: Send {
-    fn new_client(&self, data: &[u8]) -> Arc<dyn Menu>;
+    fn new_client(&self, lk: &GlobalMtx, level: BorrowedRef<'static, '_>, data: &[u8]) -> Option<Arc<dyn Menu>>;
     fn raw(&self, lk: &GlobalMtx) -> usize;
 }
 
@@ -110,12 +110,14 @@ impl GUIDefs {
 }
 
 #[dyn_abi]
-fn container_factory_create(jni: &JNI, this: usize, id: i32, _inv: usize, data: usize) -> usize {
+fn container_factory_create(jni: &'static JNI, this: usize, id: i32, inv: usize, data: usize) -> usize {
     let GlobalObjs { mtx, gui_defs, mv, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let this = gui_defs.container_factory.read(&lk, BorrowedRef::new(jni, &this));
+    let player = BorrowedRef::new(jni, &inv).get_object_field(mv.inventory_player).unwrap();
+    let level = player.call_object_method(mv.entity_level, &[]).unwrap().unwrap();
     let data = BorrowedRef::new(jni, &data).call_object_method(mv.friendly_byte_buf_read_byte_array, &[]).unwrap().unwrap();
-    let menu = this.new_client(&data.crit_elems().unwrap());
+    let Some(menu) = this.new_client(&lk, level.borrow(), &data.byte_elems().unwrap()) else { return 0 };
     let menu = gui_defs.menu.new_obj(jni, menu);
     menu.call_void_method(mv.container_menu_init, &[this.raw(&lk), id as _]).unwrap();
     menu.into_raw()

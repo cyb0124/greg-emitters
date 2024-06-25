@@ -30,7 +30,7 @@ pub trait TileExt<'a>: JRef<'a> {
     fn tile_pos(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.tile_pos).unwrap() }
     fn block_state_get_block(&self) -> LocalRef<'a> { self.call_object_method(objs().mv.block_state_get_block, &[]).unwrap().unwrap() }
     fn block_state_at(&self, pos: usize) -> LocalRef<'a> { self.call_object_method(objs().mv.block_getter_get_block_state, &[pos]).unwrap().unwrap() }
-    fn tile_at(&self, pos: usize) -> LocalRef<'a> { self.call_object_method(objs().mv.block_getter_get_tile, &[pos]).unwrap().unwrap() }
+    fn tile_at(&self, pos: usize) -> Option<LocalRef<'a>> { self.call_object_method(objs().mv.block_getter_get_tile, &[pos]).unwrap() }
     fn level_is_client(&self) -> bool { self.get_bool_field(objs().mv.level_is_client) }
 }
 

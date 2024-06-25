@@ -10,7 +10,7 @@ hashbrown = { version = "0.14.3", default-features = false, features = ["ahash",
 libm = { version = "0.2.8", features = ["unstable"] }
 macros = { version = "0.1.0", path = "../macros" }
 mapping_macros = { version = "0.1.0", path = "../../mcct/mapping_macros" }
-nalgebra = { version = "0.32.5", default-features = false, features = ["macros", "libm"] }
+nalgebra = { version = "0.32.5", default-features = false, features = ["macros", "libm", "serde-serialize-no-std"] }
 postcard = { version = "1.0.8", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.198", default-features = false, features = ["alloc", "derive"] }
 simba = { version = "0.8.1", default-features = false }
