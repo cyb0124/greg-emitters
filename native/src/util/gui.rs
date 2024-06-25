@@ -1,6 +1,7 @@
 use super::{
     cleaner::Cleanable,
     mapping::{ForgeCN, ForgeMN, CN, MN},
+    tessellator::Rect,
     ClassBuilder, ClassNamer, FatWrapper, ThinWrapper,
 };
 use crate::{
@@ -15,9 +16,25 @@ use core::cell::RefCell;
 use macros::dyn_abi;
 use nalgebra::Vector2;
 
+impl<'a, T: JRef<'a>> GUIExt<'a> for T {}
+pub trait GUIExt<'a>: JRef<'a> {
+    fn to_formatted(&self) -> LocalRef<'a> { self.call_object_method(objs().mv.chat_component_to_formatted, &[]).unwrap().unwrap() }
+
+    fn literal(&self) -> LocalRef<'a> {
+        let mv = &objs().mv;
+        mv.chat_component.with_jni(self.jni()).call_static_object_method(mv.chat_component_literal, &[self.raw()]).unwrap().unwrap()
+    }
+
+    fn translatable(&self) -> LocalRef<'a> {
+        let mv = &objs().mv;
+        mv.chat_component.with_jni(self.jni()).call_static_object_method(mv.chat_component_translatable, &[self.raw()]).unwrap().unwrap()
+    }
+}
+
 pub trait Menu: Cleanable {
     fn get_size(&self) -> Vector2<i32>;
     fn get_offset(&self) -> Vector2<i32>;
+    fn render_bg(&self, lk: &GlobalMtx, screen: BorrowedRef, gui: BorrowedRef, rect: Rect);
 }
 
 pub trait MenuType: Send {
@@ -84,13 +101,11 @@ impl GUIDefs {
         title: &impl JRef<'static>, // String
         data: Vec<u8>,
     ) {
-        let GlobalObjs { mv, fmv, .. } = objs();
-        let jni = player.jni();
-        let title = mv.chat_component.with_jni(jni).call_static_object_method(mv.chat_component_translatable, &[title.raw()]).unwrap().unwrap();
-        let provider = MenuProvider { title: title.new_global_ref().unwrap(), menu_type, menu: RefCell::new(Some(menu)), data };
-        let provider = self.menu_provider.new_obj(jni, Arc::new(provider));
-        let network_hooks = fmv.network_hooks.with_jni(jni);
-        network_hooks.call_static_void_method(fmv.network_hooks_open_screen, &[player.raw(), provider.raw, provider.raw]).unwrap()
+        let title = title.translatable().new_global_ref().unwrap();
+        let provider = MenuProvider { title, menu_type, menu: RefCell::new(Some(menu)), data };
+        let provider = self.menu_provider.new_obj(player.jni(), Arc::new(provider));
+        let network_hooks = objs().fmv.network_hooks.with_jni(player.jni());
+        network_hooks.call_static_void_method(objs().fmv.network_hooks_open_screen, &[player.raw(), provider.raw, provider.raw]).unwrap()
     }
 }
 

@@ -4,6 +4,7 @@ pub mod geometry;
 pub mod gui;
 pub mod mapping;
 pub mod nbt;
+pub mod tessellator;
 pub mod tile;
 
 use self::cleaner::Cleanable;

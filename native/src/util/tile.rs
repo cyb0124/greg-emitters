@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     asm::*,
-    global::{warn, GlobalMtx, GlobalObjs},
+    global::{GlobalMtx, GlobalObjs},
     jvm::*,
     mapping_base::{cs, CSig, MSig},
     objs,

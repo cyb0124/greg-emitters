@@ -1,6 +1,8 @@
 use super::{
     geometry::lerp,
+    gui::GUIExt,
     mapping::{CN, MN},
+    tessellator::{Mesh, Rect},
     ClassBuilder, ClassNamer, AV, OP_ALOAD, OP_ARETURN,
 };
 use crate::{global::GlobalMtx, jvm::*, mapping_base::*, objs, registry::make_resource_loc};
@@ -19,12 +21,48 @@ pub trait ClientExt<'a>: JRef<'a> {
         pose.call_object_method(mvc.matrix4fc_read, &[pose_data.as_mut_ptr() as _]).unwrap();
         Affine3::from_matrix_unchecked(Matrix4::from_data(unsafe { pose_data.assume_init() }))
     }
+
+    fn screen_font(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.client.uref().screen_font).unwrap() }
+    fn font_width(&self, formatted: &impl JRef<'a>) -> i32 { self.call_int_method(objs().mv.client.uref().font_width, &[formatted.raw()]).unwrap() }
+
+    fn gui_draw_formatted(&self, font: &impl JRef<'a>, formatted: &impl JRef<'a>, x: i32, y: i32, color: i32, drop_shadow: bool) {
+        self.call_int_method(
+            objs().mv.client.uref().gui_graphics_draw_formatted,
+            &[font.raw(), formatted.raw(), x as _, y as _, color as _, drop_shadow as _],
+        )
+        .unwrap();
+    }
+
+    fn gui_draw_mesh(&self, mesh: &mut Mesh) {
+        let mvc = objs().mv.client.uref();
+        let pose = self.get_object_field(mvc.gui_graphics_pose).unwrap();
+        let pose = pose.call_object_method(mvc.pose_stack_last, &[]).unwrap().unwrap().get_object_field(mvc.pose_pose).unwrap();
+        let render_sys = mvc.render_sys.with_jni(self.jni());
+        render_sys.call_static_void_method(mvc.render_sys_set_shader, &[objs().client_defs.uref().pos_color_shader_supplier.raw]).unwrap();
+        render_sys.call_static_void_method(mvc.render_sys_enable_blend, &[]).unwrap();
+        render_sys.call_static_void_method(mvc.render_sys_disable_cull, &[]).unwrap();
+        let tess = mvc.tesselator.with_jni(self.jni()).call_static_object_method(mvc.tesselator_get_inst, &[]).unwrap().unwrap();
+        let vb = tess.call_object_method(mvc.tesselator_get_builder, &[]).unwrap().unwrap();
+        vb.call_void_method(mvc.buffer_builder_begin, &[mvc.vertex_mode_tris.raw, mvc.default_vertex_fmt_pos_color.raw]).unwrap();
+        for &idx in &mesh.indices {
+            let v = &mesh.vertices[idx as usize];
+            vb.call_object_method(mvc.vertex_consumer_pos, &[pose.raw, f_raw(v.pos.x), f_raw(v.pos.y), f_raw(0.)]).unwrap();
+            vb.call_object_method(mvc.vertex_consumer_color, &[f_raw(v.color.x), f_raw(v.color.y), f_raw(v.color.z), f_raw(v.color.w)]).unwrap();
+            vb.call_void_method(mvc.vertex_consumer_end_vertex, &[]).unwrap()
+        }
+        mesh.indices.clear();
+        mesh.vertices.clear();
+        tess.call_void_method(mvc.tesselator_end, &[]).unwrap();
+        render_sys.call_static_void_method(mvc.render_sys_enable_cull, &[]).unwrap();
+        render_sys.call_static_void_method(mvc.render_sys_disable_blend, &[]).unwrap()
+    }
 }
 
 pub struct ClientDefs {
     pub tile_renderer: GlobalRef<'static>,
     pub screen_constructor: GlobalRef<'static>,
     container_screen: GlobalRef<'static>,
+    pos_color_shader_supplier: GlobalRef<'static>,
 }
 
 impl ClientDefs {
@@ -44,16 +82,37 @@ impl ClientDefs {
             .native_2(&mn.container_screen_render_labels, container_screen_render_labels_dyn())
             .native_2(&mn.container_screen_minit, container_screen_minit_dyn())
             .define_empty();
+        let pos_color_shader_supplier = ClassBuilder::new_1(av, namer, c"java/lang/Object")
+            .interfaces([c"java/util/function/Supplier"])
+            .native_1(c"get", c"()Ljava/lang/Object;", pos_color_shader_supplier_dyn())
+            .define_empty();
         Self {
             tile_renderer: tile_renderer.alloc_object().unwrap().new_global_ref().unwrap(),
             screen_constructor: screen_constructor.alloc_object().unwrap().new_global_ref().unwrap(),
             container_screen,
+            pos_color_shader_supplier: pos_color_shader_supplier.alloc_object().unwrap().new_global_ref().unwrap(),
         }
     }
 }
 
 #[dyn_abi]
-fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, partial_tick: f32, mx: i32, my: i32) {}
+fn pos_color_shader_supplier(jni: &JNI, _: usize) -> usize {
+    let mvc = objs().mv.client.uref();
+    mvc.game_renderer.with_jni(jni).call_static_object_method(mvc.game_renderer_get_pos_color_shader, &[]).unwrap().unwrap().into_raw()
+}
+
+#[dyn_abi]
+fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, partial_tick: f32, mx: i32, my: i32) {
+    let mvc = objs().mv.client.uref();
+    let this = BorrowedRef::new(jni, &this);
+    this.call_void_method(mvc.screen_render_background, &[gui_graphics]).unwrap();
+    let min = point![this.get_int_field(mvc.container_screen_left), this.get_int_field(mvc.container_screen_top)];
+    let menu = this.get_object_field(mvc.container_screen_menu).unwrap();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let menu = objs().gui_defs.menu.read(&lk, menu.borrow());
+    let rect = Rect { min: min.cast(), max: (min + menu.get_size()).cast() };
+    menu.render_bg(&lk, this, BorrowedRef::new(jni, &gui_graphics), rect)
+}
 
 #[dyn_abi]
 fn container_screen_minit(jni: &JNI, this: usize) {
@@ -62,29 +121,24 @@ fn container_screen_minit(jni: &JNI, this: usize) {
     let this = BorrowedRef::new(jni, &this);
     let menu = this.get_object_field(mvc.container_screen_menu).unwrap();
     let menu = objs().gui_defs.menu.read(&lk, menu.borrow());
-    let max_size = vector![this.get_int_field(mvc.container_screen_width), this.get_int_field(mvc.container_screen_height)];
+    let max_size = vector![this.get_int_field(mvc.screen_width), this.get_int_field(mvc.screen_height)];
     let pos = (max_size - menu.get_size()) / 2 + menu.get_offset();
     this.set_int_field(mvc.container_screen_left, pos.x);
     this.set_int_field(mvc.container_screen_top, pos.y)
 }
 
 #[dyn_abi]
-fn container_screen_render_labels(jni: &JNI, this: usize, gui_graphics: usize, mx: i32, my: i32) {
+fn container_screen_render_labels(jni: &JNI, this: usize, gui_graphics: usize, _mx: i32, _my: i32) {
     let mvc = objs().mv.client.uref();
     let this = BorrowedRef::new(jni, &this);
-    BorrowedRef::new(jni, &gui_graphics)
-        .call_int_method(
-            mvc.gui_graphics_draw_string,
-            &[
-                this.get_object_field(mvc.container_screen_font).unwrap().raw,
-                this.get_object_field(mvc.container_screen_title).unwrap().raw,
-                this.get_int_field(mvc.container_screen_title_x) as _,
-                this.get_int_field(mvc.container_screen_title_y) as _,
-                0x404040,
-                0,
-            ],
-        )
-        .unwrap();
+    BorrowedRef::new(jni, &gui_graphics).gui_draw_formatted(
+        &this.screen_font(),
+        &this.get_object_field(mvc.screen_title).unwrap().to_formatted(),
+        this.get_int_field(mvc.container_screen_title_x),
+        this.get_int_field(mvc.container_screen_title_y),
+        0x404040,
+        false,
+    )
 }
 
 #[dyn_abi]

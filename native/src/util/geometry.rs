@@ -1,6 +1,6 @@
 use crate::{global::GlobalObjs, jvm::*, objs};
 use core::f32::consts::FRAC_1_SQRT_2;
-use nalgebra::{point, vector, Point3, Quaternion, Unit, UnitQuaternion, Vector3};
+use nalgebra::{point, vector, Point3, Quaternion, Unit, UnitQuaternion, Vector2, Vector3};
 
 pub const DIR_STEPS: [Vector3<i32>; 6] =
     [vector![0, -1, 0], vector![0, 1, 0], vector![0, 0, -1], vector![0, 0, 1], vector![-1, 0, 0], vector![1, 0, 0]];
@@ -23,6 +23,8 @@ pub trait GeomExt<'a>: JRef<'a> {
     }
 }
 
+pub fn mul_i(v: Vector2<f32>) -> Vector2<f32> { vector![-v.y, v.x] }
+pub fn mul_ni(v: Vector2<f32>) -> Vector2<f32> { vector![v.y, -v.x] }
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 { a * (1. - t) + b * t }
 pub fn write_dir<'a>(jni: &'a JNI, dir: u8) -> LocalRef<'a> { objs().mv.dir_by_3d_data.with_jni(jni).get_object_elem(dir as _).unwrap().unwrap() }
 

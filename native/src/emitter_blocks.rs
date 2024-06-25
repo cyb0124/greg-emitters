@@ -291,16 +291,16 @@ fn on_place(jni: &JNI, this: usize, _state: usize, level: usize, pos: usize, _ol
 }
 
 #[dyn_abi]
-fn on_use(jni: &'static JNI, block: usize, state: usize, level: usize, pos: usize, player: usize, hand: usize, hit: usize) -> usize {
+fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: usize, player: usize, _hand: usize, _hit: usize) -> usize {
     let GlobalObjs { mv, mtx, gui_defs, .. } = objs();
     let level = BorrowedRef::new(jni, &level);
     let player = BorrowedRef::new(jni, &player);
     let false = level.level_is_client() else { return mv.interaction_result_success.raw };
     let true = player.is_instance_of(mv.server_player.raw) else { return mv.interaction_result_pass.raw };
     let lk = mtx.lock(jni).unwrap();
-    let block = lk.emitter_blocks.get().unwrap().block.read(&lk, BorrowedRef::new(jni, &block));
+    let tile = level.tile_at(pos);
     let tiers = lk.tiers.borrow();
-    let item = tiers[block.tier as usize].emitter_item.get().unwrap().with_jni(jni);
+    let item = tiers[lk.read_tile::<Emitter>(tile.borrow()).tier as usize].emitter_item.get().unwrap().with_jni(jni);
     let title = item.call_nonvirtual_object_method(mv.item.raw, mv.item_get_desc_id, &[]).unwrap().unwrap();
     gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(EmitterMenu {}), &title, Vec::new());
     mv.interaction_result_consume.raw
