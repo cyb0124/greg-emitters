@@ -1,6 +1,6 @@
 use super::{
     geometry::{lerp, Rect},
-    gui::GUIExt,
+    gui::{GUIExt, Menu},
     mapping::{CN, MN},
     tessellator::Mesh,
     ClassBuilder, ClassNamer, AV, OP_ALOAD, OP_ARETURN,
@@ -94,6 +94,8 @@ impl ClientDefs {
             .native_2(&mn.container_screen_render_labels, container_screen_render_labels_dyn())
             .native_2(&mn.container_screen_minit, container_screen_minit_dyn())
             .native_2(&mn.container_screen_mouse_clicked, container_screen_mouse_clicked_dyn())
+            .native_2(&mn.container_screen_mouse_dragged, container_screen_mouse_dragged_dyn())
+            .native_2(&mn.container_screen_mouse_released, container_screen_mouse_released_dyn())
             .define_empty();
         let pos_color_shader_supplier = ClassBuilder::new_1(av, namer, c"java/lang/Object")
             .interfaces([c"java/util/function/Supplier"])
@@ -114,30 +116,56 @@ fn pos_color_shader_supplier(jni: &JNI, _: usize) -> usize {
     mvc.game_renderer.with_jni(jni).call_static_object_method(mvc.game_renderer_get_pos_color_shader, &[]).unwrap().unwrap().into_raw()
 }
 
+fn container_screen_rect(screen: BorrowedRef, menu: &dyn Menu) -> Rect {
+    let min = screen.screen_pos();
+    Rect { min: min.cast(), max: (min + menu.get_size()).cast() }
+}
+
 #[dyn_abi]
 fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, _partial_tick: f32, _mx: i32, _my: i32) {
     let mvc = objs().mv.client.uref();
     let this = BorrowedRef::new(jni, &this);
-    this.call_void_method(mvc.screen_render_background, &[gui_graphics]).unwrap();
-    let min = this.screen_pos();
     let menu = this.get_object_field(mvc.container_screen_menu).unwrap();
     let lk = objs().mtx.lock(jni).unwrap();
     let menu = objs().gui_defs.menu.read(&lk, menu.borrow());
-    let rect = Rect { min: min.cast(), max: (min + menu.get_size()).cast() };
-    menu.render_bg(&lk, BorrowedRef::new(jni, &gui_graphics), rect)
+    if menu.should_draw_dark_bg() {
+        this.call_void_method(mvc.screen_render_background, &[gui_graphics]).unwrap()
+    }
+    menu.render_bg(&lk, this, BorrowedRef::new(jni, &gui_graphics), container_screen_rect(this, menu))
 }
 
 #[dyn_abi]
 fn container_screen_mouse_clicked(jni: &JNI, this: usize, mx: f64, my: f64, button: i32) -> bool {
     let mvc = objs().mv.client.uref();
     let this = BorrowedRef::new(jni, &this);
-    let min = this.screen_pos();
     let j_menu = this.get_object_field(mvc.container_screen_menu).unwrap();
     let lk = objs().mtx.lock(jni).unwrap();
     let menu = objs().gui_defs.menu.read(&lk, j_menu.borrow());
-    let rect = Rect { min: min.cast(), max: (min + menu.get_size()).cast() };
-    let false = menu.mouse_clicked(&lk, j_menu.borrow(), rect, point![mx, my].cast(), button) else { return true };
+    let false = menu.mouse_clicked(&lk, j_menu.borrow(), container_screen_rect(this, menu), point![mx, my].cast(), button) else { return true };
     this.call_nonvirtual_bool_method(mvc.container_screen.raw, mvc.container_screen_mouse_clicked, &[d_raw(mx), d_raw(my), button as _]).unwrap()
+}
+
+#[dyn_abi]
+fn container_screen_mouse_dragged(jni: &JNI, this: usize, mx: f64, my: f64, button: i32, dx: f64, dy: f64) -> bool {
+    let mvc = objs().mv.client.uref();
+    let this = BorrowedRef::new(jni, &this);
+    let j_menu = this.get_object_field(mvc.container_screen_menu).unwrap();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let menu = objs().gui_defs.menu.read(&lk, j_menu.borrow());
+    let false = menu.mouse_dragged(&lk, j_menu.borrow(), container_screen_rect(this, menu), point![mx, my].cast()) else { return true };
+    let args = [d_raw(mx), d_raw(my), button as _, d_raw(dx), d_raw(dy)];
+    this.call_nonvirtual_bool_method(mvc.container_screen.raw, mvc.container_screen_mouse_dragged, &args).unwrap()
+}
+
+#[dyn_abi]
+fn container_screen_mouse_released(jni: &JNI, this: usize, mx: f64, my: f64, button: i32) -> bool {
+    let mvc = objs().mv.client.uref();
+    let this = BorrowedRef::new(jni, &this);
+    let menu = this.get_object_field(mvc.container_screen_menu).unwrap();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let menu = objs().gui_defs.menu.read(&lk, menu.borrow());
+    let false = menu.mouse_released(&lk, button) else { return true };
+    this.call_nonvirtual_bool_method(mvc.container_screen.raw, mvc.container_screen_mouse_released, &[d_raw(mx), d_raw(my), button as _]).unwrap()
 }
 
 #[dyn_abi]

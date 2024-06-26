@@ -304,7 +304,8 @@ fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: us
     let item = tiers[lk.read_tile::<Emitter>(tile.borrow()).tier as usize].emitter_item.get().unwrap().with_jni(jni);
     let title = item.call_nonvirtual_object_method(mv.item.raw, mv.item_get_desc_id, &[]).unwrap().unwrap();
     let data = postcard::to_allocvec(&BorrowedRef::new(jni, &pos).read_vec3i()).unwrap();
-    gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(EmitterMenu { tile: tile.new_weak_global_ref().unwrap() }), &title, data);
+    let menu = EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into() };
+    gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(menu), &title, data);
     mv.interaction_result_consume.raw
 }
 

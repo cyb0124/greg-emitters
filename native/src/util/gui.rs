@@ -45,8 +45,11 @@ pub trait Menu: Cleanable {
     fn any(&self) -> &dyn Any;
     fn get_size(&self) -> Vector2<i32>;
     fn get_offset(&self) -> Vector2<i32>;
-    fn render_bg(&self, lk: &GlobalMtx, gui: BorrowedRef, rect: Rect);
+    fn should_draw_dark_bg(&self) -> bool;
+    fn render_bg(&self, lk: &GlobalMtx, screen: BorrowedRef, gui: BorrowedRef, rect: Rect);
     fn mouse_clicked(&self, lk: &GlobalMtx, menu: BorrowedRef, rect: Rect, pos: Point2<f32>, button: i32) -> bool;
+    fn mouse_dragged(&self, lk: &GlobalMtx, menu: BorrowedRef, rect: Rect, pos: Point2<f32>) -> bool;
+    fn mouse_released(&self, lk: &GlobalMtx, button: i32) -> bool;
     fn still_valid(&self, player: BorrowedRef) -> bool;
 }
 

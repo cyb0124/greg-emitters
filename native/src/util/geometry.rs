@@ -4,7 +4,7 @@ use nalgebra::{point, vector, Point2, Point3, Quaternion, Unit, UnitQuaternion, 
 
 pub const DIR_STEPS: [Vector3<i32>; 6] =
     [vector![0, -1, 0], vector![0, 1, 0], vector![0, 0, -1], vector![0, 0, 1], vector![-1, 0, 0], vector![1, 0, 0]];
-
+pub const DIR_ADJS: [[u8; 4]; 6] = [[2, 5, 3, 4], [3, 5, 2, 4], [1, 5, 0, 4], [0, 5, 1, 4], [0, 3, 1, 2], [0, 2, 1, 3]];
 pub const DIR_ATTS: [UnitQuaternion<f32>; 6] = [
     Unit::new_unchecked(Quaternion::new(FRAC_1_SQRT_2, FRAC_1_SQRT_2, 0., 0.)),
     Unit::new_unchecked(Quaternion::new(FRAC_1_SQRT_2, -FRAC_1_SQRT_2, 0., 0.)),
