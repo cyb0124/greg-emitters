@@ -30,6 +30,7 @@ mod emitter_items;
 mod global;
 pub mod jvm;
 pub mod mapping_base;
+mod packets;
 mod registry;
 mod util;
 

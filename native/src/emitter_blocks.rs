@@ -1,12 +1,11 @@
 use crate::{
     asm::*,
     emitter_gui::{EmitterMenu, EmitterMenuType},
-    global::{warn, GlobalMtx, GlobalObjs, Tier},
+    global::{GlobalMtx, GlobalObjs, Tier},
     jvm::*,
     mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
-    ti,
     util::{
         cleaner::Cleanable,
         client::DrawContext,
@@ -42,8 +41,8 @@ pub struct EmitterBlocks {
 #[derive(Default, Serialize, Deserialize)]
 pub struct CommonData {
     pub dir: Option<u8>,
-    polar: f32,
-    azimuth: f32,
+    pub polar: f32,
+    pub azimuth: f32,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -169,6 +168,7 @@ impl Tile for Emitter {
         let common = self.common.borrow();
         let Some(dir) = common.dir else { return };
         tf *= Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
+        tf *= UnitQuaternion::from_euler_angles(0., common.azimuth, 0.);
         // Legs
         const LEG_LEN: f32 = 0.3;
         const LEG_DIA: f32 = 0.05;
@@ -188,6 +188,7 @@ impl Tile for Emitter {
         // Cylinder (r, h, v)
         const CONTOUR: [(f32, f32, f32); 4] = [(1., 0., 0.), (1., 1., 1.), (0.9, 1., 0.8), (0.6, 0.8, 0.6)];
         const N_SEGS: usize = 8;
+        tf *= UnitQuaternion::from_euler_angles(common.polar, 0., 0.);
         let base = vector![RADIUS, libm::tanf(PI / N_SEGS as f32) * RADIUS];
         let bot_y = LEG_LEN - 0.5;
         let bot_q = tf * point![0., bot_y, 0.];
@@ -360,7 +361,7 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
     let tiers = lk.tiers.borrow();
     if volts > emitter.volts(&tiers) {
         let state = mv.blocks_fire.with_jni(jni).call_object_method(mv.block_default_state, &[]).unwrap().unwrap();
-        tile.tile_level().call_bool_method(mv.level_set_block_and_update, &[tile.tile_pos().raw, state.raw]).unwrap();
+        tile.tile_level().unwrap().call_bool_method(mv.level_set_block_and_update, &[tile.tile_pos().raw, state.raw]).unwrap();
         return 1;
     }
     let mut data = emitter.server.borrow_mut();

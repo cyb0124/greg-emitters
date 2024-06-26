@@ -21,6 +21,11 @@ pub struct ForgeCN<T> {
     pub forge_menu_type: T,
     pub network_hooks: T,
     pub fml_client_setup_evt: T,
+    pub network_reg: T,
+    pub simple_channel: T,
+    pub msg_handler: T,
+    pub network_ctx: T,
+    pub network_dir: T,
     // Client
     pub renderers_evt: T,
     pub atlas_evt: T,
@@ -45,6 +50,11 @@ impl ForgeCN<Arc<CSig>> {
             forge_menu_type: b"net.minecraftforge.common.extensions.IForgeMenuType",
             network_hooks: b"net.minecraftforge.network.NetworkHooks",
             fml_client_setup_evt: b"net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent",
+            network_reg: b"net.minecraftforge.network.NetworkRegistry",
+            simple_channel: b"net.minecraftforge.network.simple.SimpleChannel",
+            msg_handler: b"net.minecraftforge.network.simple.IndexedMessageCodec$MessageHandler",
+            network_ctx: b"net.minecraftforge.network.NetworkEvent$Context",
+            network_dir: b"net.minecraftforge.network.NetworkDirection",
             // Client
             renderers_evt: b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers",
             atlas_evt: b"net.minecraftforge.client.event.TextureStitchEvent",
@@ -60,6 +70,9 @@ pub struct ForgeMN {
     pub container_factory_create: MSig,
     pub forge_menu_type_create: MSig,
     pub network_hooks_open_screen: MSig,
+    pub network_reg_new_simple_channel: MSig,
+    pub simple_channel_reg_msg: MSig,
+    pub gen_enqueue_work: MSig,
 }
 
 impl ForgeMN {
@@ -86,6 +99,27 @@ impl ForgeMN {
                 owner: fcn.network_hooks.clone(),
                 name: cs("openScreen"),
                 sig: msig([cn.server_player.sig.to_bytes(), cn.menu_provider.sig.to_bytes(), b"Ljava/util/function/Consumer;"], b"V"),
+            },
+            network_reg_new_simple_channel: MSig {
+                owner: fcn.network_reg.clone(),
+                name: cs("newSimpleChannel"),
+                sig: msig(
+                    [cn.resource_loc.sig.to_bytes(), b"Ljava/util/function/Supplier;Ljava/util/function/Predicate;Ljava/util/function/Predicate;"],
+                    fcn.simple_channel.sig.to_bytes(),
+                ),
+            },
+            simple_channel_reg_msg: MSig {
+                owner: fcn.simple_channel.clone(),
+                name: cs("registerMessage"),
+                sig: msig(
+                    [B("ILjava/lang/Class;Ljava/util/function/BiConsumer;Ljava/util/function/Function;Ljava/util/function/BiConsumer;")],
+                    fcn.msg_handler.sig.to_bytes(),
+                ),
+            },
+            gen_enqueue_work: MSig {
+                owner: fcn.network_ctx.clone(),
+                name: cs("enqueueWork"),
+                sig: cs("(Ljava/lang/Runnable;)Ljava/util/concurrent/CompletableFuture;"),
             },
         }
     }
@@ -116,6 +150,16 @@ pub struct ForgeMV {
     pub network_hooks: GlobalRef<'static>,
     pub network_hooks_open_screen: usize,
     pub parallel_dispatch_evt_enqueue: usize,
+    pub network_reg: GlobalRef<'static>,
+    pub network_reg_new_simple_channel: usize,
+    pub simple_channel_reg_msg: usize,
+    pub simple_channel_send_to_server: usize,
+    pub network_ctx_set_handled: usize,
+    pub network_ctx_get_dir: usize,
+    pub network_ctx_get_sender: usize,
+    pub network_ctx_enqueue_task: usize,
+    pub network_dir_s2c: GlobalRef<'static>,
+    pub network_dir_c2s: GlobalRef<'static>,
     pub client: Option<ForgeMVC>,
 }
 
@@ -145,6 +189,10 @@ impl ForgeMV {
         let forge_menu_type = load(&fcn.forge_menu_type);
         let network_hooks = load(&fcn.network_hooks);
         let parallel_dispatch_evt = av.ldr.load_class(&av.jv, c"net.minecraftforge.fml.event.lifecycle.ParallelDispatchEvent").unwrap();
+        let network_reg = load(&fcn.network_reg);
+        let simple_channel = load(&fcn.simple_channel);
+        let network_ctx = load(&fcn.network_ctx);
+        let network_dir = load(&fcn.network_dir);
         let dist = fml.static_field_1(c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
         let is_client = dist.call_bool_method(dist.get_object_class().get_method_id(c"isClient", c"()Z").unwrap(), &[]).unwrap();
         Self {
@@ -171,9 +219,17 @@ impl ForgeMV {
             forge_menu_type,
             network_hooks_open_screen: fmn.network_hooks_open_screen.get_static_method_id(&network_hooks).unwrap(),
             network_hooks,
-            parallel_dispatch_evt_enqueue: parallel_dispatch_evt
-                .get_method_id(c"enqueueWork", c"(Ljava/lang/Runnable;)Ljava/util/concurrent/CompletableFuture;")
-                .unwrap(),
+            parallel_dispatch_evt_enqueue: fmn.gen_enqueue_work.get_method_id(&parallel_dispatch_evt).unwrap(),
+            network_reg_new_simple_channel: fmn.network_reg_new_simple_channel.get_static_method_id(&network_reg).unwrap(),
+            network_reg,
+            simple_channel_reg_msg: fmn.simple_channel_reg_msg.get_method_id(&simple_channel).unwrap(),
+            simple_channel_send_to_server: simple_channel.get_method_id(c"sendToServer", c"(Ljava/lang/Object;)V").unwrap(),
+            network_ctx_set_handled: network_ctx.get_method_id(c"setPacketHandled", c"(Z)V").unwrap(),
+            network_ctx_get_dir: network_ctx.get_method_id(c"getDirection", &msig([], fcn.network_dir.sig.to_bytes())).unwrap(),
+            network_ctx_get_sender: network_ctx.get_method_id(c"getSender", &msig([], cn.server_player.sig.to_bytes())).unwrap(),
+            network_ctx_enqueue_task: fmn.gen_enqueue_work.get_method_id(&network_ctx).unwrap(),
+            network_dir_s2c: network_dir.static_field_1(c"PLAY_TO_CLIENT", &fcn.network_dir.sig),
+            network_dir_c2s: network_dir.static_field_1(c"PLAY_TO_SERVER", &fcn.network_dir.sig),
             client: is_client.then(|| {
                 let renderers_evt = load(&fcn.renderers_evt);
                 let renderers_evt_reg = msig([cn.tile_type.sig.to_bytes(), cn.tile_renderer_provider.sig.to_bytes()], b"V");
@@ -241,6 +297,13 @@ pub struct CN<T> {
     pub interaction_hand: T,
     pub block_hit_result: T,
     pub entity: T,
+    pub container: T,
+    pub game_profile: T,
+    pub holder: T,
+    pub holder_ref: T,
+    pub sound_evts: T,
+    pub chunk_source: T,
+    pub server_chunk_cache: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -271,6 +334,9 @@ pub struct CN<T> {
     pub buffer_builder: T,
     pub mc: T,
     pub window: T,
+    pub sound_mgr: T,
+    pub sound_inst: T,
+    pub simple_sound_inst: T,
 }
 
 impl CN<Arc<CSig>> {
@@ -328,6 +394,13 @@ impl CN<Arc<CSig>> {
             interaction_hand: b"net.minecraft.world.InteractionHand",
             block_hit_result: b"net.minecraft.world.phys.BlockHitResult",
             entity: b"net.minecraft.world.entity.Entity",
+            container: b"net.minecraft.world.Container",
+            game_profile: b"com.mojang.authlib.GameProfile",
+            holder: b"net.minecraft.core.Holder",
+            holder_ref: b"net.minecraft.core.Holder$Reference",
+            sound_evts: b"net.minecraft.sounds.SoundEvents",
+            chunk_source: b"net.minecraft.world.level.chunk.ChunkSource",
+            server_chunk_cache: b"net.minecraft.server.level.ServerChunkCache",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -358,6 +431,9 @@ impl CN<Arc<CSig>> {
             buffer_builder: b"com.mojang.blaze3d.vertex.BufferBuilder",
             mc: b"net.minecraft.client.Minecraft",
             window: b"com.mojang.blaze3d.platform.Window",
+            sound_mgr: b"net.minecraft.client.sounds.SoundManager",
+            sound_inst: b"net.minecraft.client.resources.sounds.SoundInstance",
+            simple_sound_inst: b"net.minecraft.client.resources.sounds.SimpleSoundInstance",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -415,9 +491,11 @@ pub struct MN<T> {
     pub level_set_block_and_update: T,
     pub level_update_neighbors_for_out_signal: T,
     pub level_is_client: T,
+    pub level_get_chunk_source: T,
     pub container_menu_init: T,
     pub container_menu_still_valid: T,
     pub container_menu_quick_move_stack: T,
+    pub container_menu_id: T,
     pub menu_provider_create_menu: T,
     pub menu_provider_get_display_name: T,
     pub chat_component_translatable: T,
@@ -427,6 +505,12 @@ pub struct MN<T> {
     pub friendly_byte_buf_write_byte_array: T,
     pub inventory_player: T,
     pub entity_level: T,
+    pub container_still_valid: T,
+    pub player_profile: T,
+    pub player_container_menu: T,
+    pub game_profile_get_name: T,
+    pub sound_evts_ui_btn_click: T,
+    pub server_chunk_cache_block_changed: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -464,6 +548,7 @@ pub struct MN<T> {
     pub container_screen_menu: T,
     pub container_screen_render_bg: T,
     pub container_screen_render_labels: T,
+    pub container_screen_mouse_clicked: T,
     pub gui_graphics_draw_formatted: T,
     pub gui_graphics_pose: T,
     pub render_sys_set_shader: T,
@@ -480,8 +565,11 @@ pub struct MN<T> {
     pub buffer_builder_begin: T,
     pub mc_get_inst: T,
     pub mc_get_window: T,
+    pub mc_get_sound_mgr: T,
     pub window_get_gui_scale: T,
     pub font_width: T,
+    pub sound_mgr_play: T,
+    pub simple_sound_inst_for_ui_holder: T,
 }
 
 impl MN<MSig> {
@@ -645,6 +733,7 @@ impl MN<MSig> {
                 sig: msig([cn.block_pos.sig.to_bytes(), cn.block.sig.to_bytes()], b"V"),
             },
             level_is_client: MSig { owner: cn.level.clone(), name: cs("f_46443_"), sig: cs("Z") },
+            level_get_chunk_source: MSig { owner: cn.level.clone(), name: cs("m_7726_"), sig: msig([], cn.chunk_source.sig.to_bytes()) },
             menu_provider_create_menu: MSig {
                 owner: cn.menu_provider.clone(),
                 name: cs("m_7208_"),
@@ -678,6 +767,20 @@ impl MN<MSig> {
             },
             inventory_player: MSig { owner: cn.inventory.clone(), name: cs("f_35978_"), sig: cn.player.sig.clone() },
             entity_level: MSig { owner: cn.entity.clone(), name: cs("m_9236_"), sig: msig([], cn.level.sig.to_bytes()) },
+            container_still_valid: MSig {
+                owner: cn.container.clone(),
+                name: cs("m_272074_"),
+                sig: msig([cn.tile.sig.to_bytes(), cn.player.sig.to_bytes()], b"Z"),
+            },
+            player_profile: MSig { owner: cn.player.clone(), name: cs("f_36084_"), sig: cn.game_profile.sig.clone() },
+            player_container_menu: MSig { owner: cn.player.clone(), name: cs("f_36096_"), sig: cn.container_menu.sig.clone() },
+            game_profile_get_name: MSig { owner: cn.game_profile.clone(), name: cs("getName"), sig: cs("()Ljava/lang/String;") },
+            sound_evts_ui_btn_click: MSig { owner: cn.sound_evts.clone(), name: cs("f_12490_"), sig: cn.holder_ref.sig.clone() },
+            server_chunk_cache_block_changed: MSig {
+                owner: cn.server_chunk_cache.clone(),
+                name: cs("m_8450_"),
+                sig: msig([cn.block_pos.sig.to_bytes()], b"V"),
+            },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -728,6 +831,7 @@ impl MN<MSig> {
                 name: cs("m_7648_"),
                 sig: msig([cn.player.sig.to_bytes(), b"I"], cn.item_stack.sig.to_bytes()),
             },
+            container_menu_id: MSig { owner: cn.container_menu.clone(), name: cs("f_38840_"), sig: cs("I") },
             menu_screens_reg: MSig {
                 owner: cn.menu_screens.clone(),
                 name: cs("m_96206_"),
@@ -769,6 +873,7 @@ impl MN<MSig> {
                 name: cs("m_280003_"),
                 sig: msig([cn.gui_graphics.sig.to_bytes(), b"II"], b"V"),
             },
+            container_screen_mouse_clicked: MSig { owner: cn.container_screen.clone(), name: cs("m_6375_"), sig: cs("(DDI)Z") },
             gui_graphics_draw_formatted: MSig {
                 owner: cn.gui_graphics.clone(),
                 name: cs("m_280649_"),
@@ -797,8 +902,15 @@ impl MN<MSig> {
             },
             mc_get_inst: MSig { owner: cn.mc.clone(), name: cs("m_91087_"), sig: msig([], cn.mc.sig.to_bytes()) },
             mc_get_window: MSig { owner: cn.mc.clone(), name: cs("m_91268_"), sig: msig([], cn.window.sig.to_bytes()) },
+            mc_get_sound_mgr: MSig { owner: cn.mc.clone(), name: cs("m_91106_"), sig: msig([], cn.sound_mgr.sig.to_bytes()) },
             window_get_gui_scale: MSig { owner: cn.window.clone(), name: cs("m_85449_"), sig: cs("()D") },
             font_width: MSig { owner: cn.font.clone(), name: cs("m_92724_"), sig: msig([cn.formatted_char_seq.sig.to_bytes()], b"I") },
+            sound_mgr_play: MSig { owner: cn.sound_mgr.clone(), name: cs("m_120367_"), sig: msig([cn.sound_inst.sig.to_bytes()], b"V") },
+            simple_sound_inst_for_ui_holder: MSig {
+                owner: cn.simple_sound_inst.clone(),
+                name: cs("m_263171_"),
+                sig: msig([cn.holder.sig.to_bytes(), b"F"], cn.simple_sound_inst.sig.to_bytes()),
+            },
         };
         if !fmv.fml_naming_is_srg {
             let from = av.ldr.jni.new_utf(c"srg").unwrap();
@@ -863,9 +975,11 @@ pub struct MV {
     pub level_set_block_and_update: usize,
     pub level_update_neighbors_for_out_signal: usize,
     pub level_is_client: usize,
+    pub level_get_chunk_source: usize,
     pub friendly_byte_buf_read_byte_array: usize,
     pub friendly_byte_buf_write_byte_array: usize,
     pub container_menu_init: usize,
+    pub container_menu_id: usize,
     pub chat_component: GlobalRef<'static>,
     pub chat_component_translatable: usize,
     pub chat_component_literal: usize,
@@ -876,6 +990,13 @@ pub struct MV {
     pub server_player: GlobalRef<'static>,
     pub inventory_player: usize,
     pub entity_level: usize,
+    pub container: GlobalRef<'static>,
+    pub container_still_valid: usize,
+    pub player_profile: usize,
+    pub player_container_menu: usize,
+    pub game_profile_get_name: usize,
+    pub sound_evts_ui_btn_click: GlobalRef<'static>,
+    pub server_chunk_cache_block_changed: usize,
     pub client: Option<MVC>,
 }
 
@@ -902,6 +1023,7 @@ pub struct MVC {
     pub screen_width: usize,
     pub screen_height: usize,
     pub screen_render_background: usize,
+    pub container_screen: GlobalRef<'static>,
     pub container_screen_init: usize,
     pub container_screen_img_width: usize,
     pub container_screen_img_height: usize,
@@ -910,6 +1032,7 @@ pub struct MVC {
     pub container_screen_left: usize,
     pub container_screen_top: usize,
     pub container_screen_menu: usize,
+    pub container_screen_mouse_clicked: usize,
     pub gui_graphics_draw_formatted: usize,
     pub gui_graphics_pose: usize,
     pub render_sys: GlobalRef<'static>,
@@ -930,6 +1053,11 @@ pub struct MVC {
     pub window_inst: GlobalRef<'static>,
     pub window_get_gui_scale: usize,
     pub font_width: usize,
+    pub mc_inst: GlobalRef<'static>,
+    pub mc_get_sound_mgr: usize,
+    pub sound_mgr_play: usize,
+    pub simple_sound_inst: GlobalRef<'static>,
+    pub simple_sound_inst_for_ui_holder: usize,
 }
 
 impl MV {
@@ -959,6 +1087,8 @@ impl MV {
         let container_menu = load(&cn.container_menu);
         let chat_component = load(&cn.chat_component);
         let interaction_result = load(&cn.interaction_result);
+        let container = load(&cn.container);
+        let player = load(&cn.player);
         MV {
             base_tile_block_init: mn.base_tile_block_init.get_method_id(&base_tile_block).unwrap(),
             block_default_state: mn.block_default_state.get_method_id(&block).unwrap(),
@@ -1009,9 +1139,11 @@ impl MV {
             level_set_block_and_update: mn.level_set_block_and_update.get_method_id(&level).unwrap(),
             level_update_neighbors_for_out_signal: mn.level_update_neighbors_for_out_signal.get_method_id(&level).unwrap(),
             level_is_client: mn.level_is_client.get_field_id(&level).unwrap(),
+            level_get_chunk_source: mn.level_get_chunk_source.get_method_id(&level).unwrap(),
             friendly_byte_buf_read_byte_array: mn.friendly_byte_buf_read_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
             friendly_byte_buf_write_byte_array: mn.friendly_byte_buf_write_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
             container_menu_init: mn.container_menu_init.get_method_id(&container_menu).unwrap(),
+            container_menu_id: mn.container_menu_id.get_field_id(&container_menu).unwrap(),
             chat_component_translatable: mn.chat_component_translatable.get_static_method_id(&chat_component).unwrap(),
             chat_component_literal: mn.chat_component_literal.get_static_method_id(&chat_component).unwrap(),
             chat_component_to_formatted: mn.chat_component_to_formatted.get_method_id(&chat_component).unwrap(),
@@ -1022,6 +1154,13 @@ impl MV {
             server_player: load(&cn.server_player),
             inventory_player: mn.inventory_player.get_field_id(&load(&cn.inventory)).unwrap(),
             entity_level: mn.entity_level.get_method_id(&load(&cn.entity)).unwrap(),
+            container_still_valid: mn.container_still_valid.get_static_method_id(&container).unwrap(),
+            container,
+            player_profile: mn.player_profile.get_field_id(&player).unwrap(),
+            player_container_menu: mn.player_container_menu.get_field_id(&player).unwrap(),
+            game_profile_get_name: mn.game_profile_get_name.get_method_id(&load(&cn.game_profile)).unwrap(),
+            sound_evts_ui_btn_click: load(&cn.sound_evts).static_field_2(&mn.sound_evts_ui_btn_click),
+            server_chunk_cache_block_changed: mn.server_chunk_cache_block_changed.get_method_id(&load(&cn.server_chunk_cache)).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);
@@ -1044,6 +1183,7 @@ impl MV {
                 let mc_inst = mc.call_static_object_method(mn.mc_get_inst.get_static_method_id(&mc).unwrap(), &[]).unwrap().unwrap();
                 let window_inst = mc_inst.call_object_method(mn.mc_get_window.get_method_id(&mc).unwrap(), &[]).unwrap().unwrap();
                 let window = window_inst.get_object_class();
+                let simple_sound_inst = load(&cn.simple_sound_inst);
                 MVC {
                     pose_pose: mn.pose_pose.get_field_id(&pose).unwrap(),
                     pose_stack_last: mn.pose_stack_last.get_method_id(&pose_stack).unwrap(),
@@ -1075,6 +1215,8 @@ impl MV {
                     container_screen_left: mn.container_screen_left.get_field_id(&container_screen).unwrap(),
                     container_screen_top: mn.container_screen_top.get_field_id(&container_screen).unwrap(),
                     container_screen_menu: mn.container_screen_menu.get_field_id(&container_screen).unwrap(),
+                    container_screen_mouse_clicked: mn.container_screen_mouse_clicked.get_method_id(&container_screen).unwrap(),
+                    container_screen,
                     gui_graphics_draw_formatted: mn.gui_graphics_draw_formatted.get_method_id(&gui_graphics).unwrap(),
                     gui_graphics_pose: mn.gui_graphics_pose.get_field_id(&gui_graphics).unwrap(),
                     render_sys_set_shader: mn.render_sys_set_shader.get_static_method_id(&render_sys).unwrap(),
@@ -1095,6 +1237,11 @@ impl MV {
                     window_get_gui_scale: mn.window_get_gui_scale.get_method_id(&window).unwrap(),
                     window_inst: window_inst.new_global_ref().unwrap(),
                     font_width: mn.font_width.get_method_id(&load(&cn.font)).unwrap(),
+                    mc_get_sound_mgr: mn.mc_get_sound_mgr.get_method_id(&mc).unwrap(),
+                    mc_inst: mc_inst.new_global_ref().unwrap(),
+                    sound_mgr_play: mn.sound_mgr_play.get_method_id(&load(&cn.sound_mgr)).unwrap(),
+                    simple_sound_inst_for_ui_holder: mn.simple_sound_inst_for_ui_holder.get_static_method_id(&simple_sound_inst).unwrap(),
+                    simple_sound_inst,
                 }
             }),
         }

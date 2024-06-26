@@ -1,10 +1,10 @@
-use super::geometry::{mul_i, mul_ni};
+use super::geometry::{mul_i, mul_ni, Rect};
 use crate::{jvm::*, mapping_base::MBOptExt, objs};
 use alloc::vec::Vec;
 use core::ops::AddAssign;
-use nalgebra::{point, Point2, Vector2, Vector4};
+use nalgebra::{Point2, Vector2, Vector4};
 
-// Extracted from epaint of egui
+// 2D vector graphics tessellator extracted from epaint of egui
 
 pub struct Stroke {
     pub width: f32,
@@ -54,23 +54,6 @@ impl Rounding {
 
 impl AddAssign for Rounding {
     fn add_assign(&mut self, rhs: Self) { *self = Self { nw: self.nw + rhs.nw, ne: self.ne + rhs.ne, sw: self.sw + rhs.sw, se: self.se + rhs.se }; }
-}
-
-#[derive(Clone, Copy)]
-pub struct Rect {
-    pub min: Point2<f32>,
-    pub max: Point2<f32>,
-}
-
-impl Rect {
-    pub fn width(&self) -> f32 { self.max.x - self.min.x }
-    pub fn height(&self) -> f32 { self.max.y - self.min.y }
-    pub fn size(&self) -> Vector2<f32> { self.max - self.min }
-    pub fn center(&self) -> Point2<f32> { self.min.lerp(&self.max, 0.5) }
-    pub fn center_top(&self) -> Point2<f32> { point!(self.center().x, self.min.y) }
-    pub fn center_bottom(&self) -> Point2<f32> { point!(self.center().x, self.max.y) }
-    pub fn left_center(&self) -> Point2<f32> { point!(self.min.x, self.center().y) }
-    pub fn right_center(&self) -> Point2<f32> { point!(self.max.x, self.center().y) }
 }
 
 mod precomputed_vertices {
@@ -438,7 +421,8 @@ impl Path {
 }
 
 pub mod path {
-    use super::{Rect, Rounding};
+    use super::Rounding;
+    use crate::util::geometry::Rect;
     use alloc::vec::Vec;
     use nalgebra::{point, Point2};
 

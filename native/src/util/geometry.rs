@@ -1,6 +1,6 @@
 use crate::{global::GlobalObjs, jvm::*, objs};
 use core::f32::consts::FRAC_1_SQRT_2;
-use nalgebra::{point, vector, Point3, Quaternion, Unit, UnitQuaternion, Vector2, Vector3};
+use nalgebra::{point, vector, Point2, Point3, Quaternion, Unit, UnitQuaternion, Vector2, Vector3};
 
 pub const DIR_STEPS: [Vector3<i32>; 6] =
     [vector![0, -1, 0], vector![0, 1, 0], vector![0, 0, -1], vector![0, 0, 1], vector![-1, 0, 0], vector![1, 0, 0]];
@@ -37,4 +37,22 @@ pub fn new_voxel_shape<'a>(jni: &'a JNI, min: Point3<f32>, max: Point3<f32>) -> 
     let mv = &objs().mv;
     let args = [min.x, min.y, min.z, max.x, max.y, max.z].map(|x| d_raw(x as _));
     mv.shapes.with_jni(jni).call_static_object_method(mv.shapes_create, &args).unwrap().unwrap().new_global_ref().unwrap()
+}
+
+#[derive(Clone, Copy)]
+pub struct Rect {
+    pub min: Point2<f32>,
+    pub max: Point2<f32>,
+}
+
+impl Rect {
+    pub fn width(&self) -> f32 { self.max.x - self.min.x }
+    pub fn height(&self) -> f32 { self.max.y - self.min.y }
+    pub fn size(&self) -> Vector2<f32> { self.max - self.min }
+    pub fn center(&self) -> Point2<f32> { self.min.lerp(&self.max, 0.5) }
+    pub fn center_top(&self) -> Point2<f32> { point!(self.center().x, self.min.y) }
+    pub fn center_bottom(&self) -> Point2<f32> { point!(self.center().x, self.max.y) }
+    pub fn left_center(&self) -> Point2<f32> { point!(self.min.x, self.center().y) }
+    pub fn right_center(&self) -> Point2<f32> { point!(self.max.x, self.center().y) }
+    pub fn contains(&self, p: Point2<f32>) -> bool { self.min.x <= p.x && p.x <= self.max.x && self.min.y <= p.y && p.y <= self.max.y }
 }

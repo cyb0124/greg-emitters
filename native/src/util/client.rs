@@ -1,8 +1,8 @@
 use super::{
-    geometry::lerp,
+    geometry::{lerp, Rect},
     gui::GUIExt,
     mapping::{CN, MN},
-    tessellator::{Mesh, Rect},
+    tessellator::Mesh,
     ClassBuilder, ClassNamer, AV, OP_ALOAD, OP_ARETURN,
 };
 use crate::{global::GlobalMtx, jvm::*, mapping_base::*, objs, registry::make_resource_loc};
@@ -13,17 +13,12 @@ use nalgebra::{point, vector, Affine3, ArrayStorage, Matrix4, Point2, Point3, Ve
 
 impl<'a, T: JRef<'a>> ClientExt<'a> for T {}
 pub trait ClientExt<'a>: JRef<'a> {
-    // Called on PoseStack
-    fn last_pose(&self) -> Affine3<f32> {
-        let mvc = objs().mv.client.uref();
-        let pose = self.call_object_method(mvc.pose_stack_last, &[]).unwrap().unwrap().get_object_field(mvc.pose_pose).unwrap();
-        let mut pose_data = MaybeUninit::<ArrayStorage<f32, 4, 4>>::uninit();
-        pose.call_object_method(mvc.matrix4fc_read, &[pose_data.as_mut_ptr() as _]).unwrap();
-        Affine3::from_matrix_unchecked(Matrix4::from_data(unsafe { pose_data.assume_init() }))
-    }
-
-    fn screen_font(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.client.uref().screen_font).unwrap() }
     fn font_width(&self, formatted: &impl JRef<'a>) -> i32 { self.call_int_method(objs().mv.client.uref().font_width, &[formatted.raw()]).unwrap() }
+    fn screen_font(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.client.uref().screen_font).unwrap() }
+    fn screen_pos(&self) -> Point2<i32> {
+        let mvc = objs().mv.client.uref();
+        point![self.get_int_field(mvc.container_screen_left), self.get_int_field(mvc.container_screen_top)]
+    }
 
     fn gui_draw_formatted(&self, font: &impl JRef<'a>, formatted: &impl JRef<'a>, x: i32, y: i32, color: i32, drop_shadow: bool) {
         self.call_int_method(
@@ -56,6 +51,23 @@ pub trait ClientExt<'a>: JRef<'a> {
         render_sys.call_static_void_method(mvc.render_sys_enable_cull, &[]).unwrap();
         render_sys.call_static_void_method(mvc.render_sys_disable_blend, &[]).unwrap()
     }
+
+    // Called on PoseStack
+    fn last_pose(&self) -> Affine3<f32> {
+        let mvc = objs().mv.client.uref();
+        let pose = self.call_object_method(mvc.pose_stack_last, &[]).unwrap().unwrap().get_object_field(mvc.pose_pose).unwrap();
+        let mut pose_data = MaybeUninit::<ArrayStorage<f32, 4, 4>>::uninit();
+        pose.call_object_method(mvc.matrix4fc_read, &[pose_data.as_mut_ptr() as _]).unwrap();
+        Affine3::from_matrix_unchecked(Matrix4::from_data(unsafe { pose_data.assume_init() }))
+    }
+}
+
+pub fn play_btn_click_sound(jni: &JNI) {
+    let mvc = objs().mv.client.uref();
+    let args = [objs().mv.sound_evts_ui_btn_click.raw, f_raw(1.)];
+    let inst = mvc.simple_sound_inst.with_jni(jni).call_static_object_method(mvc.simple_sound_inst_for_ui_holder, &args).unwrap().unwrap();
+    let mgr = mvc.mc_inst.with_jni(jni).call_object_method(mvc.mc_get_sound_mgr, &[]).unwrap().unwrap();
+    mgr.call_void_method(mvc.sound_mgr_play, &[inst.raw]).unwrap()
 }
 
 pub struct ClientDefs {
@@ -81,6 +93,7 @@ impl ClientDefs {
             .native_2(&mn.container_screen_render_bg, container_screen_render_bg_dyn())
             .native_2(&mn.container_screen_render_labels, container_screen_render_labels_dyn())
             .native_2(&mn.container_screen_minit, container_screen_minit_dyn())
+            .native_2(&mn.container_screen_mouse_clicked, container_screen_mouse_clicked_dyn())
             .define_empty();
         let pos_color_shader_supplier = ClassBuilder::new_1(av, namer, c"java/lang/Object")
             .interfaces([c"java/util/function/Supplier"])
@@ -102,16 +115,29 @@ fn pos_color_shader_supplier(jni: &JNI, _: usize) -> usize {
 }
 
 #[dyn_abi]
-fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, partial_tick: f32, mx: i32, my: i32) {
+fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, _partial_tick: f32, _mx: i32, _my: i32) {
     let mvc = objs().mv.client.uref();
     let this = BorrowedRef::new(jni, &this);
     this.call_void_method(mvc.screen_render_background, &[gui_graphics]).unwrap();
-    let min = point![this.get_int_field(mvc.container_screen_left), this.get_int_field(mvc.container_screen_top)];
+    let min = this.screen_pos();
     let menu = this.get_object_field(mvc.container_screen_menu).unwrap();
     let lk = objs().mtx.lock(jni).unwrap();
     let menu = objs().gui_defs.menu.read(&lk, menu.borrow());
     let rect = Rect { min: min.cast(), max: (min + menu.get_size()).cast() };
-    menu.render_bg(&lk, this, BorrowedRef::new(jni, &gui_graphics), rect)
+    menu.render_bg(&lk, BorrowedRef::new(jni, &gui_graphics), rect)
+}
+
+#[dyn_abi]
+fn container_screen_mouse_clicked(jni: &JNI, this: usize, mx: f64, my: f64, button: i32) -> bool {
+    let mvc = objs().mv.client.uref();
+    let this = BorrowedRef::new(jni, &this);
+    let min = this.screen_pos();
+    let j_menu = this.get_object_field(mvc.container_screen_menu).unwrap();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let menu = objs().gui_defs.menu.read(&lk, j_menu.borrow());
+    let rect = Rect { min: min.cast(), max: (min + menu.get_size()).cast() };
+    let false = menu.mouse_clicked(&lk, j_menu.borrow(), rect, point![mx, my].cast(), button) else { return true };
+    this.call_nonvirtual_bool_method(mvc.container_screen.raw, mvc.container_screen_mouse_clicked, &[d_raw(mx), d_raw(my), button as _]).unwrap()
 }
 
 #[dyn_abi]

@@ -26,12 +26,16 @@ pub trait TileExt<'a>: JRef<'a> {
         fmv.lazy_opt.with_jni(self.jni()).call_static_object_method(fmv.lazy_opt_of, &[self.raw()]).unwrap().unwrap()
     }
 
-    fn tile_level(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.tile_level).unwrap() }
+    fn tile_level(&self) -> Option<LocalRef<'a>> { self.get_object_field(objs().mv.tile_level) }
     fn tile_pos(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.tile_pos).unwrap() }
     fn block_state_get_block(&self) -> LocalRef<'a> { self.call_object_method(objs().mv.block_state_get_block, &[]).unwrap().unwrap() }
     fn block_state_at(&self, pos: usize) -> LocalRef<'a> { self.call_object_method(objs().mv.block_getter_get_block_state, &[pos]).unwrap().unwrap() }
     fn tile_at(&self, pos: usize) -> Option<LocalRef<'a>> { self.call_object_method(objs().mv.block_getter_get_tile, &[pos]).unwrap() }
     fn level_is_client(&self) -> bool { self.get_bool_field(objs().mv.level_is_client) }
+    fn level_mark_for_broadcast(&self, pos: &impl JRef<'a>) {
+        let chunk_source = self.call_object_method(objs().mv.level_get_chunk_source, &[]).unwrap().unwrap();
+        chunk_source.call_void_method(objs().mv.server_chunk_cache_block_changed, &[pos.raw()]).unwrap()
+    }
 }
 
 pub trait TileSupplier: Send {
@@ -95,8 +99,9 @@ impl TileDefs {
 }
 
 impl GlobalMtx {
-    pub fn read_tile<'a, T: Tile + 'static>(&'a self, obj: BorrowedRef<'_, 'a>) -> &'a T {
-        objs().tile_defs.tile.read(self, obj).any().downcast_ref().unwrap()
+    pub fn read_tile<'a, T: Tile + 'static>(&'a self, obj: BorrowedRef<'_, 'a>) -> &'a T { self.try_read_tile(obj).unwrap() }
+    pub fn try_read_tile<'a, T: Tile + 'static>(&'a self, obj: BorrowedRef<'_, 'a>) -> Option<&'a T> {
+        objs().tile_defs.tile.read(self, obj).any().downcast_ref()
     }
 }
 

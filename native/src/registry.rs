@@ -6,6 +6,7 @@ use core::ffi::{c_char, CStr};
 use macros::dyn_abi;
 
 pub const MOD_ID: &str = "greg_emitters";
+pub const PROTOCOL_VERSION: &CStr = c"0";
 pub const EMITTER_ID: &str = "emitter";
 
 pub fn init() {

@@ -12,6 +12,7 @@ use crate::{
         client::{ClientDefs, Sprite},
         gui::GUIDefs,
         mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
+        network::NetworkDefs,
         tile::TileDefs,
         ClassBuilder, ClassNamer,
     },
@@ -44,6 +45,7 @@ pub struct GlobalObjs {
     pub greg_creative_tab_stub: MSig,
     pub greg_reinit_models_stub: MSig,
     pub mtx: JMutex<'static, GlobalMtx>,
+    pub net_defs: NetworkDefs,
     logger: GlobalRef<'static>,
     logger_warn: usize,
 }
@@ -106,6 +108,7 @@ impl GlobalObjs {
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
             client_defs: mv.client.fmap(|_| ClientDefs::init(&av, &namer, &cn, &mn)),
+            net_defs: NetworkDefs::init(&av, &namer, &mv, &fmv),
             gui_defs: GUIDefs::init(&av, &cn, &mn, &fcn, &fmn, &namer),
             tile_defs: TileDefs::init(&av, &cn, &mn, &fmn, &namer),
             cleaner: Cleaner::new(&av, &namer),

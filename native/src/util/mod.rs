@@ -4,6 +4,7 @@ pub mod geometry;
 pub mod gui;
 pub mod mapping;
 pub mod nbt;
+pub mod network;
 pub mod tessellator;
 pub mod tile;
 

@@ -1,7 +1,7 @@
 use super::{
     cleaner::Cleanable,
+    geometry::Rect,
     mapping::{ForgeCN, ForgeMN, CN, MN},
-    tessellator::Rect,
     ClassBuilder, ClassNamer, FatWrapper, ThinWrapper,
 };
 use crate::{
@@ -12,14 +12,24 @@ use crate::{
     objs,
 };
 use alloc::{sync::Arc, vec::Vec};
-use core::cell::RefCell;
+use core::{any::Any, cell::RefCell};
 use macros::dyn_abi;
-use nalgebra::Vector2;
+use nalgebra::{Point2, Vector2};
 
 impl<'a, T: JRef<'a>> GUIExt<'a> for T {}
 pub trait GUIExt<'a>: JRef<'a> {
+    fn player_container_menu(&self) -> Option<LocalRef<'a>> { self.get_object_field(objs().mv.player_container_menu) }
+    fn menu_id(&self) -> i32 { self.get_int_field(objs().mv.container_menu_id) }
+
+    // Called on Tile
+    fn still_valid(&self, player: &impl JRef<'a>) -> bool {
+        objs().mv.container.with_jni(self.jni()).call_static_bool_method(objs().mv.container_still_valid, &[self.raw(), player.raw()]).unwrap()
+    }
+
+    // Called on chat.Component
     fn to_formatted(&self) -> LocalRef<'a> { self.call_object_method(objs().mv.chat_component_to_formatted, &[]).unwrap().unwrap() }
 
+    // Called on String
     fn literal(&self) -> LocalRef<'a> {
         let mv = &objs().mv;
         mv.chat_component.with_jni(self.jni()).call_static_object_method(mv.chat_component_literal, &[self.raw()]).unwrap().unwrap()
@@ -32,9 +42,12 @@ pub trait GUIExt<'a>: JRef<'a> {
 }
 
 pub trait Menu: Cleanable {
+    fn any(&self) -> &dyn Any;
     fn get_size(&self) -> Vector2<i32>;
     fn get_offset(&self) -> Vector2<i32>;
-    fn render_bg(&self, lk: &GlobalMtx, screen: BorrowedRef, gui: BorrowedRef, rect: Rect);
+    fn render_bg(&self, lk: &GlobalMtx, gui: BorrowedRef, rect: Rect);
+    fn mouse_clicked(&self, lk: &GlobalMtx, menu: BorrowedRef, rect: Rect, pos: Point2<f32>, button: i32) -> bool;
+    fn still_valid(&self, player: BorrowedRef) -> bool;
 }
 
 pub trait MenuType: Send {
@@ -150,7 +163,11 @@ fn menu_provider_accept(jni: &JNI, this: usize, byte_buf: usize) {
 }
 
 #[dyn_abi]
-fn still_valid(jni: &JNI, this: usize, player: usize) -> bool { true }
+fn still_valid(jni: &JNI, this: usize, player: usize) -> bool {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let this = objs().gui_defs.menu.read(&lk, BorrowedRef::new(jni, &this));
+    this.still_valid(BorrowedRef::new(jni, &player))
+}
 
 #[dyn_abi]
-fn quick_move_stack(jni: &JNI, this: usize, player: usize, index: i32) -> usize { 0 }
+fn quick_move_stack(_jni: &JNI, _this: usize, _player: usize, _index: i32) -> usize { 0 }
