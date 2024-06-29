@@ -24,6 +24,7 @@ macro_rules! dyn_abi {
 }
 
 pub mod asm;
+mod beams;
 mod emitter_blocks;
 mod emitter_gui;
 mod emitter_items;
@@ -32,7 +33,7 @@ pub mod jvm;
 pub mod mapping_base;
 mod packets;
 mod registry;
-mod util;
+pub mod util;
 
 extern crate alloc;
 use alloc::{ffi::CString, format};

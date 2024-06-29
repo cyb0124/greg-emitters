@@ -119,7 +119,7 @@ fn task_run(jni: &JNI, this: usize) {
             warn(jni, format!("Failed to handle packet from player {}: {e:?}", BStr::new(&*name.utf_chars().unwrap())))
         }
     } else if dir.is_same_object(fmv.network_dir_s2c.raw) {
-        if let Err(e) = handle_s2c(&*msg) {
+        if let Err(e) = handle_s2c(&lk, &*msg) {
             warn(jni, format!("Failed to handle packet from server: {e:?}"))
         }
     }

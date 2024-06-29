@@ -1,5 +1,6 @@
 use crate::{
     asm::*,
+    beams::{ClientState, ServerState},
     emitter_blocks::EmitterBlocks,
     emitter_items::EmitterItems,
     jvm::*,
@@ -44,6 +45,7 @@ pub struct GlobalObjs {
     pub greg_reg_item_stub: MSig,
     pub greg_creative_tab_stub: MSig,
     pub greg_reinit_models_stub: MSig,
+    pub mc_clear_level_stub: MSig,
     pub mtx: JMutex<'static, GlobalMtx>,
     pub net_defs: NetworkDefs,
     logger: GlobalRef<'static>,
@@ -68,6 +70,8 @@ pub struct GlobalMtx {
     pub emitter_blocks: OnceCell<EmitterBlocks>,
     pub tier_lookup: RefCell<HashMap<Arc<str>, u8>>,
     pub tiers: RefCell<Vec<Tier>>,
+    pub server_state: RefCell<ServerState>,
+    pub client_state: RefCell<ClientState>,
 }
 
 impl GlobalObjs {
@@ -98,6 +102,8 @@ impl GlobalObjs {
         cb.stub(&greg_creative_tab_stub, greg_creative_tab_stub_dyn());
         let greg_reinit_models_stub = cb.stub_name(cs("0"), cs("()V"));
         cb.stub(&greg_reinit_models_stub, greg_reinit_models_stub_dyn());
+        let mc_clear_level_stub = cb.stub_name(cs("1"), cs("()V"));
+        cb.stub(&mc_clear_level_stub, mc_clear_level_stub_dyn());
         cb.define_empty();
 
         // Logger
@@ -126,6 +132,7 @@ impl GlobalObjs {
             greg_reg_item_stub,
             greg_creative_tab_stub,
             greg_reinit_models_stub,
+            mc_clear_level_stub,
             logger: logger.new_global_ref().unwrap(),
             logger_warn: logger.get_object_class().get_method_id(c"warn", c"(Ljava/lang/String;)V").unwrap(),
         }
@@ -180,3 +187,6 @@ fn greg_reinit_models_stub(jni: &JNI, _: usize) {
         add_greg_dyn_resource(jni, lk.gmv.get().unwrap(), id, &json)
     }
 }
+
+#[dyn_abi]
+fn mc_clear_level_stub(jni: &JNI, _: usize) { objs().mtx.lock(jni).unwrap().client_state.borrow_mut().beams.clear() }

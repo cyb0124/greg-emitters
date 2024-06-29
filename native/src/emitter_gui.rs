@@ -28,14 +28,13 @@ pub struct EmitterMenu {
 }
 
 impl MenuType for EmitterMenuType {
+    fn raw(&self, lk: &GlobalMtx) -> usize { lk.emitter_blocks.get().unwrap().menu_type.raw }
     fn new_client(&self, _lk: &GlobalMtx, level: BorrowedRef<'static, '_>, data: &[u8]) -> Option<Arc<dyn Menu>> {
         let pos: Point3<i32> = postcard::from_bytes(data).ok()?;
         let tile = level.tile_at(write_block_pos(level.jni, pos).raw)?;
         let true = tile.is_instance_of(objs().tile_defs.tile.cls.cls.raw) else { return None };
         Some(Arc::new(EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into() }))
     }
-
-    fn raw(&self, lk: &GlobalMtx) -> usize { lk.emitter_blocks.get().unwrap().menu_type.raw }
 }
 
 impl Cleanable for EmitterMenu {
@@ -100,7 +99,7 @@ impl Menu for EmitterMenu {
         let handled = button == 0 && rect.contains(pos);
         if handled {
             self.dragged.set(true);
-            self.handle_mouse(menu, rect, pos);
+            self.send_attitude(menu, rect, pos);
             play_btn_click_sound(menu.jni);
         }
         handled
@@ -109,7 +108,7 @@ impl Menu for EmitterMenu {
     fn mouse_dragged(&self, _lk: &GlobalMtx, menu: BorrowedRef, rect: Rect, pos: Point2<f32>) -> bool {
         let handled = self.dragged.get();
         if handled {
-            self.handle_mouse(menu, rect, pos)
+            self.send_attitude(menu, rect, pos)
         }
         handled
     }
@@ -123,7 +122,7 @@ impl Menu for EmitterMenu {
 }
 
 impl EmitterMenu {
-    fn handle_mouse(&self, menu: BorrowedRef, rect: Rect, pos: Point2<f32>) {
+    fn send_attitude(&self, menu: BorrowedRef, rect: Rect, pos: Point2<f32>) {
         let dir = pos - grid_center(&rect);
         let polar = dir.norm() * (FRAC_PI_2 / GRID_RADIUS);
         let azimuth = -libm::atan2f(dir.y, dir.x);

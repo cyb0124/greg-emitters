@@ -1,6 +1,8 @@
+use crate::util::geometry::GeomExt;
 use crate::util::ClassBuilder;
 use crate::util::{client::Sprite, mapping::GregMV};
 use crate::{asm::*, emitter_blocks::EmitterBlocks, global::GlobalObjs, jvm::*, mapping_base::*, objs, ti};
+use alloc::boxed::Box;
 use alloc::{format, vec::Vec};
 use core::ffi::{c_char, CStr};
 use macros::dyn_abi;
@@ -10,13 +12,16 @@ pub const PROTOCOL_VERSION: &CStr = c"0";
 pub const EMITTER_ID: &str = "emitter";
 
 pub fn init() {
-    let GlobalObjs { av, fcn, fmv, gcn, .. } = objs();
+    let GlobalObjs { av, mv, fcn, fmv, gcn, .. } = objs();
     ti().add_capabilities(CAN_RETRANSFORM_CLASSES | CAN_RETRANSFORM_ANY_CLASSES).unwrap();
     ti().set_event_callbacks(&[0, 0, 0, 0, class_file_load_hook_dyn()]).unwrap();
     ti().set_event_notification_mode(true, JVMTI_EVENT_CLASS_FILE_LOAD_HOOK, 0).unwrap();
-    let cls_list = [&gcn.reg, &gcn.creative_tab_items_gen, &gcn.material_block_renderer].map(|cn| av.ldr.load_class(&av.jv, &cn.dot).unwrap());
-    ti().retransform_classes(&Vec::from_iter(cls_list.iter().map(|x| x.raw))).unwrap();
+    // GTRegistrate may already be loaded at this point. If so, retransform it.
+    let gt_reg = av.ldr.load_class(&av.jv, &gcn.reg.dot).ok();
+    ti().retransform_classes(&Box::from_iter([gt_reg.fmap(|x| x.raw), mv.client.fmap(|x| x.mc.raw)].into_iter().flatten())).unwrap();
     add_forge_listener(&fmv.mod_evt_bus, fcn.reg_evt.sig.to_bytes(), on_forge_reg_dyn());
+    add_forge_listener(&fmv.com_evt_bus, fcn.chunk_watch_evt.sig.to_bytes(), on_chunk_watch_dyn());
+    add_forge_listener(&fmv.com_evt_bus, fcn.chunk_unwatch_evt.sig.to_bytes(), on_chunk_unwatch_dyn());
     if fmv.client.is_some() {
         add_forge_listener(&fmv.mod_evt_bus, fcn.atlas_evt.sig.to_bytes(), on_forge_atlas_dyn());
         add_forge_listener(&fmv.mod_evt_bus, fcn.renderers_evt.sig.to_bytes(), on_forge_renderers_dyn());
@@ -68,6 +73,25 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
     } else if key.equals(&av.jv, fmv.reg_key_menu_types.raw).unwrap() {
         forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().menu_type.raw)
     }
+}
+
+#[dyn_abi]
+fn on_chunk_watch(jni: &'static JNI, _: usize, evt: usize) {
+    let fmv = &objs().fmv;
+    let evt = BorrowedRef::new(jni, &evt);
+    let pos = evt.get_object_field(fmv.chunk_watch_pos).unwrap().read_chunk_pos();
+    let level = evt.get_object_field(fmv.chunk_watch_level).unwrap();
+    let player = evt.get_object_field(fmv.chunk_watch_player).unwrap();
+    crate::beams::on_chunk_watch(&player, &level, pos)
+}
+
+#[dyn_abi]
+fn on_chunk_unwatch(jni: &JNI, _: usize, evt: usize) {
+    let fmv = &objs().fmv;
+    let evt = BorrowedRef::new(jni, &evt);
+    let pos = evt.get_object_field(fmv.chunk_watch_pos).unwrap().read_chunk_pos();
+    let player = evt.get_object_field(fmv.chunk_watch_player).unwrap();
+    crate::beams::on_chunk_unwatch(&player, pos)
 }
 
 #[dyn_abi]
@@ -199,6 +223,24 @@ fn patch_greg_material_block_renderer<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef
     cls
 }
 
+fn patch_mc_clear_level<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
+    let GlobalObjs { av, mn, mc_clear_level_stub, .. } = objs();
+    let cls = av.read_class(jni, data).unwrap();
+    let mut found = false;
+    for method in cls.class_methods_iter(av).unwrap() {
+        let method = method.unwrap().expect_some().unwrap();
+        if mn.mc_clear_level.matches_node(av, &method).unwrap() {
+            let insns = method.method_insns(av).unwrap();
+            let stub = || [mc_clear_level_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap()];
+            insns.for_each_return_insn(av, |x| insns.insert_insns_before(av, x.raw, stub())).unwrap();
+            found = true;
+            break;
+        }
+    }
+    assert!(found);
+    cls
+}
+
 #[dyn_abi]
 fn class_file_load_hook(
     ti: &JVMTI,
@@ -215,13 +257,15 @@ fn class_file_load_hook(
     let false = slash.is_null() else { return };
     let slash = unsafe { CStr::from_ptr(slash) };
     let data = unsafe { core::slice::from_raw_parts(data, len as _) };
-    let GlobalObjs { av, gcn, writer_cls, .. } = objs();
+    let GlobalObjs { av, cn, gcn, writer_cls, .. } = objs();
     let cls = if slash == &*gcn.reg.slash {
         patch_greg_reg(jni, data)
     } else if slash == &*gcn.creative_tab_items_gen.slash {
         patch_greg_creative_tab_items_gen(jni, data)
     } else if slash == &*gcn.material_block_renderer.slash {
         patch_greg_material_block_renderer(jni, data)
+    } else if slash == &*cn.mc.slash {
+        patch_mc_clear_level(jni, data)
     } else {
         return;
     };

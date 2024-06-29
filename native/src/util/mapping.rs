@@ -20,13 +20,18 @@ pub struct ForgeCN<T> {
     pub container_factory: T,
     pub forge_menu_type: T,
     pub network_hooks: T,
-    pub fml_client_setup_evt: T,
     pub network_reg: T,
     pub simple_channel: T,
     pub msg_handler: T,
     pub network_ctx: T,
     pub network_dir: T,
+    pub chunk_watch_base: T,
+    pub chunk_watch_evt: T,
+    pub chunk_unwatch_evt: T,
     // Client
+    pub render_level_stage_evt: T,
+    pub render_level_stage: T,
+    pub fml_client_setup_evt: T,
     pub renderers_evt: T,
     pub atlas_evt: T,
 }
@@ -49,13 +54,18 @@ impl ForgeCN<Arc<CSig>> {
             container_factory: b"net.minecraftforge.network.IContainerFactory",
             forge_menu_type: b"net.minecraftforge.common.extensions.IForgeMenuType",
             network_hooks: b"net.minecraftforge.network.NetworkHooks",
-            fml_client_setup_evt: b"net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent",
             network_reg: b"net.minecraftforge.network.NetworkRegistry",
             simple_channel: b"net.minecraftforge.network.simple.SimpleChannel",
             msg_handler: b"net.minecraftforge.network.simple.IndexedMessageCodec$MessageHandler",
             network_ctx: b"net.minecraftforge.network.NetworkEvent$Context",
             network_dir: b"net.minecraftforge.network.NetworkDirection",
+            chunk_watch_base: b"net.minecraftforge.event.level.ChunkWatchEvent",
+            chunk_watch_evt: b"net.minecraftforge.event.level.ChunkWatchEvent$Watch",
+            chunk_unwatch_evt: b"net.minecraftforge.event.level.ChunkWatchEvent$UnWatch",
             // Client
+            render_level_stage_evt: b"net.minecraftforge.client.event.RenderLevelStageEvent",
+            render_level_stage: b"net.minecraftforge.client.event.RenderLevelStageEvent$Stage",
+            fml_client_setup_evt: b"net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent",
             renderers_evt: b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers",
             atlas_evt: b"net.minecraftforge.client.event.TextureStitchEvent",
         };
@@ -132,6 +142,7 @@ pub struct ForgeMV {
     pub naming_domain_m: GlobalRef<'static>,
     pub fml_naming_is_srg: bool,
     pub mod_evt_bus: GlobalRef<'static>,
+    pub com_evt_bus: GlobalRef<'static>,
     pub evt_bus_add_listener: usize,
     pub reg_key_blocks: GlobalRef<'static>,
     pub reg_key_tile_types: GlobalRef<'static>,
@@ -160,12 +171,17 @@ pub struct ForgeMV {
     pub network_ctx_enqueue_task: usize,
     pub network_dir_s2c: GlobalRef<'static>,
     pub network_dir_c2s: GlobalRef<'static>,
+    pub chunk_watch_player: usize,
+    pub chunk_watch_pos: usize,
+    pub chunk_watch_level: usize,
     pub client: Option<ForgeMVC>,
 }
 
 pub struct ForgeMVC {
     pub renderers_evt_reg: usize,
     pub atlas_evt_get_atlas: usize,
+    pub render_level_stage_after_particles: GlobalRef<'static>,
+    pub render_level_stage_evt_stage: usize,
 }
 
 impl ForgeMV {
@@ -174,14 +190,14 @@ impl ForgeMV {
         let cml = load(&fcn.cml);
         let naming_domain = load(&fcn.naming_domain);
         let fml = av.ldr.load_class(&av.jv, c"net.minecraftforge.fml.loading.FMLLoader").unwrap();
-        let fml_naming = fml.get_static_field_id(c"naming", c"Ljava/lang/String;").unwrap();
-        let fml_naming_is_srg = &*fml.get_static_object_field(fml_naming).unwrap().utf_chars().unwrap() == b"srg";
+        let fml_naming_is_srg = &*fml.static_field_1(c"naming", c"Ljava/lang/String;").utf_chars().unwrap() == b"srg";
         let fml_java_ctx = load(&fcn.fml_java_ctx);
         let fml_ctx_inst = fml_java_ctx.get_static_method_id(c"get", &msig([], fcn.fml_java_ctx.sig.to_bytes())).unwrap();
         let fml_ctx_inst = fml_java_ctx.call_static_object_method(fml_ctx_inst, &[]).unwrap().unwrap();
         let evt_bus = load(&fcn.evt_bus);
         let mod_evt_bus = fml_java_ctx.get_method_id(c"getModEventBus", &msig([], fcn.evt_bus.sig.to_bytes())).unwrap();
         let mod_evt_bus = fml_ctx_inst.call_object_method(mod_evt_bus, &[]).unwrap().unwrap().new_global_ref().unwrap();
+        let forge = av.ldr.load_class(&av.jv, c"net.minecraftforge.common.MinecraftForge").unwrap();
         let reg_keys = load(&fcn.reg_keys);
         let reg_evt = load(&fcn.reg_evt);
         let lazy_opt = load(&fcn.lazy_opt);
@@ -193,6 +209,7 @@ impl ForgeMV {
         let simple_channel = load(&fcn.simple_channel);
         let network_ctx = load(&fcn.network_ctx);
         let network_dir = load(&fcn.network_dir);
+        let chunk_watch_base = load(&fcn.chunk_watch_base);
         let dist = fml.static_field_1(c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
         let is_client = dist.call_bool_method(dist.get_object_class().get_method_id(c"isClient", c"()Z").unwrap(), &[]).unwrap();
         Self {
@@ -202,6 +219,7 @@ impl ForgeMV {
             naming_domain_m: naming_domain.static_field_1(c"METHOD", &fcn.naming_domain.sig),
             fml_naming_is_srg,
             mod_evt_bus,
+            com_evt_bus: forge.static_field_1(c"EVENT_BUS", &fcn.evt_bus.sig),
             evt_bus_add_listener: evt_bus.get_method_id(c"addListener", c"(Ljava/util/function/Consumer;)V").unwrap(),
             reg_key_blocks: reg_keys.static_field_1(c"BLOCKS", &cn.resource_key.sig),
             reg_key_tile_types: reg_keys.static_field_1(c"BLOCK_ENTITY_TYPES", &cn.resource_key.sig),
@@ -230,6 +248,9 @@ impl ForgeMV {
             network_ctx_enqueue_task: fmn.gen_enqueue_work.get_method_id(&network_ctx).unwrap(),
             network_dir_s2c: network_dir.static_field_1(c"PLAY_TO_CLIENT", &fcn.network_dir.sig),
             network_dir_c2s: network_dir.static_field_1(c"PLAY_TO_SERVER", &fcn.network_dir.sig),
+            chunk_watch_level: chunk_watch_base.get_field_id(c"level", &cn.server_level.sig).unwrap(),
+            chunk_watch_player: chunk_watch_base.get_field_id(c"player", &cn.server_player.sig).unwrap(),
+            chunk_watch_pos: chunk_watch_base.get_field_id(c"pos", &cn.chunk_pos.sig).unwrap(),
             client: is_client.then(|| {
                 let renderers_evt = load(&fcn.renderers_evt);
                 let renderers_evt_reg = msig([cn.tile_type.sig.to_bytes(), cn.tile_renderer_provider.sig.to_bytes()], b"V");
@@ -237,6 +258,8 @@ impl ForgeMV {
                 ForgeMVC {
                     renderers_evt_reg: renderers_evt.get_method_id(c"registerBlockEntityRenderer", &renderers_evt_reg).unwrap(),
                     atlas_evt_get_atlas: atlas_evt.get_method_id(c"getAtlas", &msig([], cn.atlas.sig.to_bytes())).unwrap(),
+                    render_level_stage_after_particles: load(&fcn.render_level_stage).static_field_1(c"AFTER_PARTICLES", &fcn.render_level_stage.sig),
+                    render_level_stage_evt_stage: load(&fcn.render_level_stage_evt).get_field_id(c"stage", &fcn.render_level_stage.sig).unwrap(),
                 }
             }),
         }
@@ -304,6 +327,9 @@ pub struct CN<T> {
     pub sound_evts: T,
     pub chunk_source: T,
     pub server_chunk_cache: T,
+    pub tile_ticker: T,
+    pub server_level: T,
+    pub chunk_pos: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -401,6 +427,9 @@ impl CN<Arc<CSig>> {
             sound_evts: b"net.minecraft.sounds.SoundEvents",
             chunk_source: b"net.minecraft.world.level.chunk.ChunkSource",
             server_chunk_cache: b"net.minecraft.server.level.ServerChunkCache",
+            tile_ticker: b"net.minecraft.world.level.block.entity.BlockEntityTicker",
+            server_level: b"net.minecraft.server.level.ServerLevel",
+            chunk_pos: b"net.minecraft.world.level.ChunkPos",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -443,6 +472,7 @@ impl CN<Arc<CSig>> {
 pub struct MN<T> {
     pub base_tile_block_init: T,
     pub tile_block_new_tile: T,
+    pub tile_block_get_ticker: T,
     pub block_default_state: T,
     pub block_beh_props_of: T,
     pub block_beh_props_strength: T,
@@ -492,6 +522,7 @@ pub struct MN<T> {
     pub level_update_neighbors_for_out_signal: T,
     pub level_is_client: T,
     pub level_get_chunk_source: T,
+    pub level_is_loaded: T,
     pub container_menu_init: T,
     pub container_menu_still_valid: T,
     pub container_menu_quick_move_stack: T,
@@ -511,6 +542,9 @@ pub struct MN<T> {
     pub game_profile_get_name: T,
     pub sound_evts_ui_btn_click: T,
     pub server_chunk_cache_block_changed: T,
+    pub tile_ticker_tick: T,
+    pub chunk_pos_x: T,
+    pub chunk_pos_z: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -568,10 +602,12 @@ pub struct MN<T> {
     pub mc_get_inst: T,
     pub mc_get_window: T,
     pub mc_get_sound_mgr: T,
+    pub mc_clear_level: T,
     pub window_get_gui_scale: T,
     pub font_width: T,
     pub sound_mgr_play: T,
     pub simple_sound_inst_for_ui_holder: T,
+    pub render_type_lightning: T,
 }
 
 impl MN<MSig> {
@@ -586,6 +622,11 @@ impl MN<MSig> {
                 owner: cn.tile_block.clone(),
                 name: cs("m_142194_"),
                 sig: msig([cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes()], cn.tile.sig.to_bytes()),
+            },
+            tile_block_get_ticker: MSig {
+                owner: cn.tile_block.clone(),
+                name: cs("m_142354_"),
+                sig: msig([cn.level.sig.to_bytes(), cn.block_state.sig.to_bytes(), cn.tile_type.sig.to_bytes()], cn.tile_ticker.sig.to_bytes()),
             },
             block_default_state: MSig { owner: cn.block.clone(), name: cs("m_49966_"), sig: msig([], cn.block_state.sig.to_bytes()) },
             block_beh_props_of: MSig { owner: cn.block_beh_props.clone(), name: cs("m_284310_"), sig: msig([], cn.block_beh_props.sig.to_bytes()) },
@@ -736,6 +777,7 @@ impl MN<MSig> {
             },
             level_is_client: MSig { owner: cn.level.clone(), name: cs("f_46443_"), sig: cs("Z") },
             level_get_chunk_source: MSig { owner: cn.level.clone(), name: cs("m_7726_"), sig: msig([], cn.chunk_source.sig.to_bytes()) },
+            level_is_loaded: MSig { owner: cn.level.clone(), name: cs("m_46749_"), sig: msig([cn.block_pos.sig.to_bytes()], b"Z") },
             menu_provider_create_menu: MSig {
                 owner: cn.menu_provider.clone(),
                 name: cs("m_7208_"),
@@ -783,6 +825,13 @@ impl MN<MSig> {
                 name: cs("m_8450_"),
                 sig: msig([cn.block_pos.sig.to_bytes()], b"V"),
             },
+            tile_ticker_tick: MSig {
+                owner: cn.tile_ticker.clone(),
+                name: cs("m_155252_"),
+                sig: msig([cn.level.sig.to_bytes(), cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes(), cn.tile.sig.to_bytes()], b"V"),
+            },
+            chunk_pos_x: MSig { owner: cn.chunk_pos.clone(), name: cs("f_45578_"), sig: cs("I") },
+            chunk_pos_z: MSig { owner: cn.chunk_pos.clone(), name: cs("f_45579_"), sig: cs("I") },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -907,6 +956,7 @@ impl MN<MSig> {
             mc_get_inst: MSig { owner: cn.mc.clone(), name: cs("m_91087_"), sig: msig([], cn.mc.sig.to_bytes()) },
             mc_get_window: MSig { owner: cn.mc.clone(), name: cs("m_91268_"), sig: msig([], cn.window.sig.to_bytes()) },
             mc_get_sound_mgr: MSig { owner: cn.mc.clone(), name: cs("m_91106_"), sig: msig([], cn.sound_mgr.sig.to_bytes()) },
+            mc_clear_level: MSig { owner: cn.mc.clone(), name: cs("m_91320_"), sig: msig([cn.screen.sig.to_bytes()], b"V") },
             window_get_gui_scale: MSig { owner: cn.window.clone(), name: cs("m_85449_"), sig: cs("()D") },
             font_width: MSig { owner: cn.font.clone(), name: cs("m_92724_"), sig: msig([cn.formatted_char_seq.sig.to_bytes()], b"I") },
             sound_mgr_play: MSig { owner: cn.sound_mgr.clone(), name: cs("m_120367_"), sig: msig([cn.sound_inst.sig.to_bytes()], b"V") },
@@ -915,6 +965,7 @@ impl MN<MSig> {
                 name: cs("m_263171_"),
                 sig: msig([cn.holder.sig.to_bytes(), b"F"], cn.simple_sound_inst.sig.to_bytes()),
             },
+            render_type_lightning: MSig { owner: cn.render_type.clone(), name: cs("m_110502_"), sig: msig([], cn.render_type.sig.to_bytes()) },
         };
         if !fmv.fml_naming_is_srg {
             let from = av.ldr.jni.new_utf(c"srg").unwrap();
@@ -980,6 +1031,7 @@ pub struct MV {
     pub level_update_neighbors_for_out_signal: usize,
     pub level_is_client: usize,
     pub level_get_chunk_source: usize,
+    pub level_is_loaded: usize,
     pub friendly_byte_buf_read_byte_array: usize,
     pub friendly_byte_buf_write_byte_array: usize,
     pub container_menu_init: usize,
@@ -1001,6 +1053,8 @@ pub struct MV {
     pub game_profile_get_name: usize,
     pub sound_evts_ui_btn_click: GlobalRef<'static>,
     pub server_chunk_cache_block_changed: usize,
+    pub chunk_pos_x: usize,
+    pub chunk_pos_z: usize,
     pub client: Option<MVC>,
 }
 
@@ -1059,11 +1113,13 @@ pub struct MVC {
     pub window_inst: GlobalRef<'static>,
     pub window_get_gui_scale: usize,
     pub font_width: usize,
+    pub mc: GlobalRef<'static>,
     pub mc_inst: GlobalRef<'static>,
     pub mc_get_sound_mgr: usize,
     pub sound_mgr_play: usize,
     pub simple_sound_inst: GlobalRef<'static>,
     pub simple_sound_inst_for_ui_holder: usize,
+    pub render_type_lightning: GlobalRef<'static>,
 }
 
 impl MV {
@@ -1095,6 +1151,7 @@ impl MV {
         let interaction_result = load(&cn.interaction_result);
         let container = load(&cn.container);
         let player = load(&cn.player);
+        let chunk_pos = load(&cn.chunk_pos);
         MV {
             base_tile_block_init: mn.base_tile_block_init.get_method_id(&base_tile_block).unwrap(),
             block_default_state: mn.block_default_state.get_method_id(&block).unwrap(),
@@ -1146,6 +1203,7 @@ impl MV {
             level_update_neighbors_for_out_signal: mn.level_update_neighbors_for_out_signal.get_method_id(&level).unwrap(),
             level_is_client: mn.level_is_client.get_field_id(&level).unwrap(),
             level_get_chunk_source: mn.level_get_chunk_source.get_method_id(&level).unwrap(),
+            level_is_loaded: mn.level_is_loaded.get_method_id(&level).unwrap(),
             friendly_byte_buf_read_byte_array: mn.friendly_byte_buf_read_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
             friendly_byte_buf_write_byte_array: mn.friendly_byte_buf_write_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
             container_menu_init: mn.container_menu_init.get_method_id(&container_menu).unwrap(),
@@ -1167,6 +1225,8 @@ impl MV {
             game_profile_get_name: mn.game_profile_get_name.get_method_id(&load(&cn.game_profile)).unwrap(),
             sound_evts_ui_btn_click: load(&cn.sound_evts).static_field_2(&mn.sound_evts_ui_btn_click),
             server_chunk_cache_block_changed: mn.server_chunk_cache_block_changed.get_method_id(&load(&cn.server_chunk_cache)).unwrap(),
+            chunk_pos_x: mn.chunk_pos_x.get_field_id(&chunk_pos).unwrap(),
+            chunk_pos_z: mn.chunk_pos_z.get_field_id(&chunk_pos).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);
@@ -1190,6 +1250,9 @@ impl MV {
                 let window_inst = mc_inst.call_object_method(mn.mc_get_window.get_method_id(&mc).unwrap(), &[]).unwrap().unwrap();
                 let window = window_inst.get_object_class();
                 let simple_sound_inst = load(&cn.simple_sound_inst);
+                let render_type = load(&cn.render_type);
+                let render_type_lightning = mn.render_type_lightning.get_static_method_id(&render_type).unwrap();
+                let render_type_lightning = render_type.call_static_object_method(render_type_lightning, &[]).unwrap().unwrap();
                 MVC {
                     pose_pose: mn.pose_pose.get_field_id(&pose).unwrap(),
                     pose_stack_last: mn.pose_stack_last.get_method_id(&pose_stack).unwrap(),
@@ -1247,9 +1310,11 @@ impl MV {
                     font_width: mn.font_width.get_method_id(&load(&cn.font)).unwrap(),
                     mc_get_sound_mgr: mn.mc_get_sound_mgr.get_method_id(&mc).unwrap(),
                     mc_inst: mc_inst.new_global_ref().unwrap(),
+                    mc,
                     sound_mgr_play: mn.sound_mgr_play.get_method_id(&load(&cn.sound_mgr)).unwrap(),
                     simple_sound_inst_for_ui_holder: mn.simple_sound_inst_for_ui_holder.get_static_method_id(&simple_sound_inst).unwrap(),
                     simple_sound_inst,
+                    render_type_lightning: render_type_lightning.new_global_ref().unwrap(),
                 }
             }),
         }

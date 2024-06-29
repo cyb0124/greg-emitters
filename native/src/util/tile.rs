@@ -32,6 +32,7 @@ pub trait TileExt<'a>: JRef<'a> {
     fn block_state_at(&self, pos: usize) -> LocalRef<'a> { self.call_object_method(objs().mv.block_getter_get_block_state, &[pos]).unwrap().unwrap() }
     fn tile_at(&self, pos: usize) -> Option<LocalRef<'a>> { self.call_object_method(objs().mv.block_getter_get_tile, &[pos]).unwrap() }
     fn level_is_client(&self) -> bool { self.get_bool_field(objs().mv.level_is_client) }
+    fn level_is_loaded(&self, pos: &impl JRef<'a>) -> bool { self.call_bool_method(objs().mv.level_is_loaded, &[pos.raw()]).unwrap() }
     fn level_mark_for_broadcast(&self, pos: &impl JRef<'a>) {
         let chunk_source = self.call_object_method(objs().mv.level_get_chunk_source, &[]).unwrap().unwrap();
         chunk_source.call_void_method(objs().mv.server_chunk_cache_block_changed, &[pos.raw()]).unwrap()

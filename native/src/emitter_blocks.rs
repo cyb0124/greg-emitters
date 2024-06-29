@@ -102,7 +102,10 @@ impl EmitterBlocks {
 
         // Blocks
         let block = ClassBuilder::new_2(jni, &cn.base_tile_block.slash)
+            .interfaces([&*cn.tile_ticker.slash])
             .native_2(&mn.tile_block_new_tile, new_tile_dyn())
+            .native_2(&mn.tile_block_get_ticker, get_ticker_dyn())
+            .native_2(&mn.tile_ticker_tick, on_tick_dyn())
             .native_2(&mn.block_beh_get_render_shape, get_render_shape_dyn())
             .native_2(&mn.block_beh_get_shape, get_shape_dyn())
             .native_2(&mn.block_beh_get_drops, get_drops_dyn())
@@ -254,6 +257,11 @@ impl TileSupplier for EmitterSupplier {
 }
 
 #[dyn_abi]
+fn on_tick(jni: &JNI, _this: usize, _pos: usize, _state: usize, tile: usize) {
+    // TODO:
+}
+
+#[dyn_abi]
 fn get_drops(jni: &JNI, this: usize, _state: usize, _loot_builder: usize) -> usize {
     let GlobalObjs { mtx, av, mv, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
@@ -284,6 +292,12 @@ fn get_render_shape(_: &JNI, _this: usize, _state: usize) -> usize { objs().mv.r
 #[dyn_abi]
 fn new_tile(jni: &'static JNI, _this: usize, pos: usize, state: usize) -> usize {
     EmitterSupplier.new_tile(&objs().mtx.lock(jni).unwrap(), BorrowedRef::new(jni, &pos), BorrowedRef::new(jni, &state)).map_or(0, |x| x.into_raw())
+}
+
+#[dyn_abi]
+fn get_ticker(jni: &JNI, this: usize, level: usize, _state: usize, _tile_type: usize) -> usize {
+    let false = BorrowedRef::new(jni, &level).level_is_client() else { return 0 };
+    this
 }
 
 #[dyn_abi]
