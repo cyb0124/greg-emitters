@@ -31,7 +31,7 @@ impl MenuType for EmitterMenuType {
     fn raw(&self, lk: &GlobalMtx) -> usize { lk.emitter_blocks.get().unwrap().menu_type.raw }
     fn new_client(&self, _lk: &GlobalMtx, level: BorrowedRef<'static, '_>, data: &[u8]) -> Option<Arc<dyn Menu>> {
         let pos: Point3<i32> = postcard::from_bytes(data).ok()?;
-        let tile = level.tile_at(write_block_pos(level.jni, pos).raw)?;
+        let tile = level.tile_at(&write_block_pos(level.jni, pos))?;
         let true = tile.is_instance_of(objs().tile_defs.tile.cls.cls.raw) else { return None };
         Some(Arc::new(EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into() }))
     }

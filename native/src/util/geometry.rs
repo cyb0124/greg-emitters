@@ -41,8 +41,13 @@ pub fn write_dir<'a>(jni: &'a JNI, dir: u8) -> LocalRef<'a> { objs().mv.dir_by_3
 pub fn block_to_chunk(pos: Point3<i32>) -> Point2<i32> { pos.xz().map(|x| x.div_euclid(16)) }
 
 pub fn write_block_pos(jni: &JNI, v: Point3<i32>) -> LocalRef {
-    let GlobalObjs { mv, .. } = objs();
+    let mv = &objs().mv;
     mv.block_pos.with_jni(jni).new_object(mv.block_pos_init, &[v.x as _, v.y as _, v.z as _]).unwrap()
+}
+
+pub fn write_vec3d(jni: &JNI, v: Point3<f64>) -> LocalRef {
+    let mv = &objs().mv;
+    mv.vec3d.with_jni(jni).new_object(mv.vec3d_init, &[d_raw(v.x), d_raw(v.y), d_raw(v.z)]).unwrap()
 }
 
 pub fn new_voxel_shape<'a>(jni: &'a JNI, min: Point3<f32>, max: Point3<f32>) -> GlobalRef<'a> {

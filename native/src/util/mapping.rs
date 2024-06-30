@@ -331,6 +331,7 @@ pub struct CN<T> {
     pub player: T,
     pub chat_component: T,
     pub chat_mutable_component: T,
+    pub chat_fmt: T,
     pub formatted_char_seq: T,
     pub interaction_hand: T,
     pub block_hit_result: T,
@@ -438,6 +439,7 @@ impl CN<Arc<CSig>> {
             player: b"net.minecraft.world.entity.player.Player",
             chat_component: b"net.minecraft.network.chat.Component",
             chat_mutable_component: b"net.minecraft.network.chat.MutableComponent",
+            chat_fmt: b"net.minecraft.ChatFormatting",
             formatted_char_seq: b"net.minecraft.util.FormattedCharSequence",
             interaction_hand: b"net.minecraft.world.InteractionHand",
             block_hit_result: b"net.minecraft.world.phys.BlockHitResult",
@@ -518,11 +520,13 @@ pub struct MN<T> {
     pub vec3i_x: T,
     pub vec3i_y: T,
     pub vec3i_z: T,
+    pub vec3d_init: T,
     pub vec3d_x: T,
     pub vec3d_y: T,
     pub vec3d_z: T,
     pub block_pos_init: T,
     pub block_state_get_block: T,
+    pub block_state_get_visual_shape: T,
     pub blocks_fire: T,
     pub tile_supplier_create: T,
     pub tile_type_init: T,
@@ -540,6 +544,7 @@ pub struct MN<T> {
     pub render_shape_tile: T,
     pub resource_loc_init: T,
     pub shapes_create: T,
+    pub collision_ctx_empty: T,
     pub s2c_tile_data_create: T,
     pub nbt_compound_init: T,
     pub nbt_compound_put_byte_array: T,
@@ -563,6 +568,8 @@ pub struct MN<T> {
     pub chat_component_translatable: T,
     pub chat_component_literal: T,
     pub chat_component_to_formatted: T,
+    pub chat_fmt_from_code: T,
+    pub chat_fmt_color: T,
     pub friendly_byte_buf_read_byte_array: T,
     pub friendly_byte_buf_write_byte_array: T,
     pub inventory_player: T,
@@ -578,6 +585,10 @@ pub struct MN<T> {
     pub chunk_pos_z: T,
     pub server_player_pkt_listener: T,
     pub server_pkt_listener_impl_conn: T,
+    pub voxel_shape_clip: T,
+    pub block_hit_result_pos: T,
+    pub block_hit_result_miss: T,
+    pub block_hit_result_dir: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -746,11 +757,20 @@ impl MN<MSig> {
             vec3i_x: MSig { owner: cn.vec3i.clone(), name: cs("f_123285_"), sig: cs("I") },
             vec3i_y: MSig { owner: cn.vec3i.clone(), name: cs("f_123286_"), sig: cs("I") },
             vec3i_z: MSig { owner: cn.vec3i.clone(), name: cs("f_123289_"), sig: cs("I") },
+            vec3d_init: MSig { owner: cn.vec3d.clone(), name: cs("<init>"), sig: cs("(DDD)V") },
             vec3d_x: MSig { owner: cn.vec3i.clone(), name: cs("f_82479_"), sig: cs("D") },
             vec3d_y: MSig { owner: cn.vec3i.clone(), name: cs("f_82480_"), sig: cs("D") },
             vec3d_z: MSig { owner: cn.vec3i.clone(), name: cs("f_82481_"), sig: cs("D") },
             block_pos_init: MSig { owner: cn.block_pos.clone(), name: cs("<init>"), sig: cs("(III)V") },
             block_state_get_block: MSig { owner: cn.block_state.clone(), name: cs("m_60734_"), sig: msig([], cn.block.sig.to_bytes()) },
+            block_state_get_visual_shape: MSig {
+                owner: cn.block_state.clone(),
+                name: cs("m_60771_"),
+                sig: msig(
+                    [cn.block_getter.sig.to_bytes(), cn.block_pos.sig.to_bytes(), cn.collision_ctx.sig.to_bytes()],
+                    cn.voxel_shape.sig.to_bytes(),
+                ),
+            },
             blocks_fire: MSig { owner: cn.blocks.clone(), name: cs("f_50083_"), sig: cn.block.sig.clone() },
             tile_supplier_create: MSig {
                 owner: cn.tile_supplier.clone(),
@@ -788,6 +808,7 @@ impl MN<MSig> {
             render_shape_tile: MSig { owner: cn.render_shape.clone(), name: cs("ENTITYBLOCK_ANIMATED"), sig: cn.render_shape.sig.clone() },
             resource_loc_init: MSig { owner: cn.resource_loc.clone(), name: cs("<init>"), sig: cs("(Ljava/lang/String;Ljava/lang/String;)V") },
             shapes_create: MSig { owner: cn.shapes.clone(), name: cs("m_166049_"), sig: msig([B("DDDDDD")], cn.voxel_shape.sig.to_bytes()) },
+            collision_ctx_empty: MSig { owner: cn.collision_ctx.clone(), name: cs("m_82749_"), sig: msig([], cn.collision_ctx.sig.to_bytes()) },
             s2c_tile_data_create: MSig {
                 owner: cn.s2c_tile_data.clone(),
                 name: cs("m_195640_"),
@@ -843,6 +864,8 @@ impl MN<MSig> {
                 name: cs("m_7532_"),
                 sig: msig([], cn.formatted_char_seq.sig.to_bytes()),
             },
+            chat_fmt_from_code: MSig { owner: cn.chat_fmt.clone(), name: cs("m_126645_"), sig: msig([B("C")], cn.chat_fmt.sig.to_bytes()) },
+            chat_fmt_color: MSig { owner: cn.chat_fmt.clone(), name: cs("f_126595_"), sig: cs("Ljava/lang/Integer;") },
             friendly_byte_buf_read_byte_array: MSig { owner: cn.friendly_byte_buf.clone(), name: cs("m_130052_"), sig: cs("()[B") },
             friendly_byte_buf_write_byte_array: MSig {
                 owner: cn.friendly_byte_buf.clone(),
@@ -874,6 +897,14 @@ impl MN<MSig> {
             chunk_pos_z: MSig { owner: cn.chunk_pos.clone(), name: cs("f_45579_"), sig: cs("I") },
             server_player_pkt_listener: MSig { owner: cn.server_player.clone(), name: cs("f_8906_"), sig: cn.server_pkt_listener_impl.sig.clone() },
             server_pkt_listener_impl_conn: MSig { owner: cn.server_pkt_listener_impl.clone(), name: cs("f_9742_"), sig: cn.conn.sig.clone() },
+            voxel_shape_clip: MSig {
+                owner: cn.voxel_shape.clone(),
+                name: cs("m_83220_"),
+                sig: msig([cn.vec3d.sig.to_bytes(), cn.vec3d.sig.to_bytes(), cn.block_pos.sig.to_bytes()], cn.block_hit_result.sig.to_bytes()),
+            },
+            block_hit_result_pos: MSig { owner: cn.block_hit_result.clone(), name: cs("f_82445_"), sig: cn.vec3d.sig.clone() },
+            block_hit_result_miss: MSig { owner: cn.block_hit_result.clone(), name: cs("f_82412_"), sig: cs("Z") },
+            block_hit_result_dir: MSig { owner: cn.block_hit_result.clone(), name: cs("f_82410_"), sig: cn.dir.sig.clone() },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -1012,7 +1043,7 @@ impl MN<MSig> {
                 name: cs("m_263171_"),
                 sig: msig([cn.holder.sig.to_bytes(), b"F"], cn.simple_sound_inst.sig.to_bytes()),
             },
-            render_type_lightning: MSig { owner: cn.render_type.clone(), name: cs("m_110502_"), sig: msig([], cn.render_type.sig.to_bytes()) },
+            render_type_lightning: MSig { owner: cn.render_type.clone(), name: cs("f_110387_"), sig: cn.render_type.sig.clone() },
             level_renderer_buffers: MSig { owner: cn.level_renderer.clone(), name: cs("f_109464_"), sig: cn.render_buffers.sig.clone() },
             render_buffers_buffer_source: MSig { owner: cn.render_buffers.clone(), name: cs("f_110094_"), sig: cn.buffer_source.sig.clone() },
             camera_pos: MSig { owner: cn.camera.clone(), name: cs("f_90552_"), sig: cn.vec3d.sig.clone() },
@@ -1046,12 +1077,15 @@ pub struct MV {
     pub vec3i_x: usize,
     pub vec3i_y: usize,
     pub vec3i_z: usize,
+    pub vec3d: GlobalRef<'static>,
+    pub vec3d_init: usize,
     pub vec3d_x: usize,
     pub vec3d_y: usize,
     pub vec3d_z: usize,
     pub block_pos: GlobalRef<'static>,
     pub block_pos_init: usize,
     pub block_state_get_block: usize,
+    pub block_state_get_visual_shape: usize,
     pub blocks_fire: GlobalRef<'static>,
     pub tile_type: GlobalRef<'static>,
     pub tile_type_init: usize,
@@ -1093,6 +1127,9 @@ pub struct MV {
     pub chat_component_translatable: usize,
     pub chat_component_literal: usize,
     pub chat_component_to_formatted: usize,
+    pub chat_fmt: GlobalRef<'static>,
+    pub chat_fmt_from_code: usize,
+    pub chat_fmt_color: usize,
     pub interaction_result_pass: GlobalRef<'static>,
     pub interaction_result_success: GlobalRef<'static>,
     pub interaction_result_consume: GlobalRef<'static>,
@@ -1110,6 +1147,11 @@ pub struct MV {
     pub server_chunk_cache_block_changed: usize,
     pub chunk_pos_x: usize,
     pub chunk_pos_z: usize,
+    pub collision_ctx_empty: GlobalRef<'static>,
+    pub voxel_shape_clip: usize,
+    pub block_hit_result_pos: usize,
+    pub block_hit_result_miss: usize,
+    pub block_hit_result_dir: usize,
     pub client: Option<MVC>,
 }
 
@@ -1208,11 +1250,15 @@ impl MV {
         let friendly_byte_buf = load(&cn.friendly_byte_buf);
         let container_menu = load(&cn.container_menu);
         let chat_component = load(&cn.chat_component);
+        let chat_fmt = load(&cn.chat_fmt);
         let interaction_result = load(&cn.interaction_result);
         let container = load(&cn.container);
         let player = load(&cn.player);
         let chunk_pos = load(&cn.chunk_pos);
         let server_player = load(&cn.server_player);
+        let collision_ctx = load(&cn.collision_ctx);
+        let collision_ctx_empty = mn.collision_ctx_empty.get_static_method_id(&collision_ctx).unwrap();
+        let block_hit_result = load(&cn.block_hit_result);
         MV {
             base_tile_block_init: mn.base_tile_block_init.get_method_id(&base_tile_block).unwrap(),
             block_default_state: mn.block_default_state.get_method_id(&block).unwrap(),
@@ -1229,12 +1275,15 @@ impl MV {
             vec3i_x: mn.vec3i_x.get_field_id(&vec3i).unwrap(),
             vec3i_y: mn.vec3i_y.get_field_id(&vec3i).unwrap(),
             vec3i_z: mn.vec3i_z.get_field_id(&vec3i).unwrap(),
+            vec3d_init: mn.vec3d_init.get_method_id(&vec3d).unwrap(),
             vec3d_x: mn.vec3d_x.get_field_id(&vec3d).unwrap(),
             vec3d_y: mn.vec3d_y.get_field_id(&vec3d).unwrap(),
             vec3d_z: mn.vec3d_z.get_field_id(&vec3d).unwrap(),
+            vec3d,
             block_pos_init: mn.block_pos_init.get_method_id(&block_pos).unwrap(),
             block_pos,
             block_state_get_block: mn.block_state_get_block.get_method_id(&block_state).unwrap(),
+            block_state_get_visual_shape: mn.block_state_get_visual_shape.get_method_id(&block_state).unwrap(),
             blocks_fire: load(&cn.blocks).static_field_2(&mn.blocks_fire),
             tile_type_init: mn.tile_type_init.get_method_id(&tile_type).unwrap(),
             tile_type,
@@ -1276,6 +1325,9 @@ impl MV {
             chat_component_literal: mn.chat_component_literal.get_static_method_id(&chat_component).unwrap(),
             chat_component_to_formatted: mn.chat_component_to_formatted.get_method_id(&chat_component).unwrap(),
             chat_component,
+            chat_fmt_from_code: mn.chat_fmt_from_code.get_static_method_id(&chat_fmt).unwrap(),
+            chat_fmt_color: mn.chat_fmt_color.get_field_id(&chat_fmt).unwrap(),
+            chat_fmt,
             interaction_result_pass: interaction_result.static_field_1(c"PASS", &cn.interaction_result.sig),
             interaction_result_success: interaction_result.static_field_1(c"SUCCESS", &cn.interaction_result.sig),
             interaction_result_consume: interaction_result.static_field_1(c"CONSUME", &cn.interaction_result.sig),
@@ -1293,6 +1345,11 @@ impl MV {
             server_chunk_cache_block_changed: mn.server_chunk_cache_block_changed.get_method_id(&load(&cn.server_chunk_cache)).unwrap(),
             chunk_pos_x: mn.chunk_pos_x.get_field_id(&chunk_pos).unwrap(),
             chunk_pos_z: mn.chunk_pos_z.get_field_id(&chunk_pos).unwrap(),
+            collision_ctx_empty: collision_ctx.call_static_object_method(collision_ctx_empty, &[]).unwrap().unwrap().new_global_ref().unwrap(),
+            voxel_shape_clip: mn.voxel_shape_clip.get_method_id(&load(&cn.voxel_shape)).unwrap(),
+            block_hit_result_pos: mn.block_hit_result_pos.get_field_id(&block_hit_result).unwrap(),
+            block_hit_result_miss: mn.block_hit_result_miss.get_field_id(&block_hit_result).unwrap(),
+            block_hit_result_dir: mn.block_hit_result_dir.get_field_id(&block_hit_result).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);
@@ -1315,9 +1372,6 @@ impl MV {
                 let window_inst = mc_inst.call_object_method(mn.mc_get_window.get_method_id(&mc).unwrap(), &[]).unwrap().unwrap();
                 let window = window_inst.get_object_class();
                 let simple_sound_inst = load(&cn.simple_sound_inst);
-                let render_type = load(&cn.render_type);
-                let render_type_lightning = mn.render_type_lightning.get_static_method_id(&render_type).unwrap();
-                let render_type_lightning = render_type.call_static_object_method(render_type_lightning, &[]).unwrap().unwrap();
                 MVC {
                     pose_pose: mn.pose_pose.get_field_id(&pose).unwrap(),
                     pose_stack_last: mn.pose_stack_last.get_method_id(&pose_stack).unwrap(),
@@ -1380,7 +1434,7 @@ impl MV {
                     sound_mgr_play: mn.sound_mgr_play.get_method_id(&load(&cn.sound_mgr)).unwrap(),
                     simple_sound_inst_for_ui_holder: mn.simple_sound_inst_for_ui_holder.get_static_method_id(&simple_sound_inst).unwrap(),
                     simple_sound_inst,
-                    render_type_lightning: render_type_lightning.new_global_ref().unwrap(),
+                    render_type_lightning: load(&cn.render_type).static_field_2(&mn.render_type_lightning),
                     level_renderer_buffers: mn.level_renderer_buffers.get_field_id(&load(&cn.level_renderer)).unwrap(),
                     render_buffers_buffer_source: mn.render_buffers_buffer_source.get_field_id(&load(&cn.render_buffers)).unwrap(),
                     camera_pos: mn.camera_pos.get_field_id(&load(&cn.camera)).unwrap(),
@@ -1477,6 +1531,7 @@ impl GregMN {
 pub struct GregMV {
     pub tier_names: GlobalRef<'static>,
     pub tier_volts: GlobalRef<'static>,
+    pub tier_fmt_names: GlobalRef<'static>,
     pub dyn_resource_pack_data: GlobalRef<'static>,
     pub energy_container_cap: GlobalRef<'static>,
     pub pipe_block: GlobalRef<'static>,
@@ -1494,6 +1549,7 @@ impl GregMV {
         Self {
             tier_names: values.static_field_1(c"VN", c"[Ljava/lang/String;"),
             tier_volts: values.static_field_1(c"V", c"[J"),
+            tier_fmt_names: values.static_field_1(c"VNF", c"[Ljava/lang/String;"),
             dyn_resource_pack_data: load(&gcn.dyn_resource_pack).static_field_1(c"DATA", c"Ljava/util/concurrent/ConcurrentMap;"),
             energy_container_cap: load(&gcn.caps).static_field_1(c"CAPABILITY_ENERGY_CONTAINER", &fcn.cap.sig),
             pipe_block_get_node: gmn.pipe_block_get_node.get_method_id(&pipe_block).unwrap(),

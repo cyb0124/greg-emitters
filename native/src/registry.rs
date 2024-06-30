@@ -110,8 +110,10 @@ fn on_level_render(jni: &JNI, _: usize, evt: usize) {
     let buffers = renderer.get_object_field(mvc.level_renderer_buffers).unwrap();
     let source = buffers.get_object_field(mvc.render_buffers_buffer_source).unwrap();
     let vb = source.call_object_method(mvc.multi_buffer_source_get_buffer, &[mvc.render_type_lightning.raw]).unwrap().unwrap();
+    let lk = objs().mtx.lock(jni).unwrap();
+    let tiers = lk.tiers.borrow();
     for beam in objs().mtx.lock(jni).unwrap().client_state.borrow().beams.values() {
-        beam.render(&vb, &pose, camera_pos)
+        beam.render(&*tiers, &vb, &pose, camera_pos)
     }
     source.call_void_method(mvc.buffer_source_end_batch, &[mvc.render_type_lightning.raw]).unwrap()
 }

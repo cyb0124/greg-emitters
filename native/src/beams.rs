@@ -1,12 +1,12 @@
 use crate::{
-    global::GlobalMtx,
+    global::{GlobalMtx, Tier},
     jvm::*,
     mapping_base::MBOptExt,
     objs,
     packets::S2C,
     ti,
     util::{
-        geometry::{block_to_chunk, write_block_pos, CoveringBlocks},
+        geometry::{block_to_chunk, write_block_pos, write_vec3d, CoveringBlocks, GeomExt},
         tile::TileExt,
     },
 };
@@ -42,7 +42,7 @@ struct BeamState {
     src: Point3<i32>,
     dir: UnitVector3<f32>,
     dst: Point3<f32>,
-    dst_block: Point3<i32>,
+    hit: Option<(Point3<i32>, u8)>,
 }
 
 #[derive(Default)]
@@ -125,17 +125,33 @@ impl BeamState {
     }
 
     fn recompute(&mut self, jni: &'static JNI, players: &mut HashTable<PlayerState>, dim: &mut DimState, id: NonZeroUsize) {
+        let mv = &objs().mv;
         let old_chunks = take(&mut self.chunks);
         self.chunks.insert(block_to_chunk(self.src));
         let mut covering = CoveringBlocks::new(self.src, Vector3::from_element(0.5), self.dir);
+        let j_src = write_vec3d(jni, covering.pos.cast::<f64>().map(|x| x + 0.5));
+        let level = self.level.0.with_jni(jni);
         loop {
             covering.step();
             let pos = write_block_pos(jni, covering.pos);
-            let true = self.level.0.with_jni(jni).level_is_loaded(&pos) else { break };
+            if !level.level_is_loaded(&pos) {
+                self.dst = covering.pos.cast::<f32>() + covering.frac;
+                self.hit = None;
+                break;
+            }
             self.chunks.insert(block_to_chunk(covering.pos));
+            let state = level.block_state_at(&pos);
+            let args = [level.raw, pos.raw, mv.collision_ctx_empty.raw];
+            let shape = state.call_object_method(mv.block_state_get_visual_shape, &args).unwrap().unwrap();
+            let j_dst = write_vec3d(jni, (covering.pos.cast::<f32>() + covering.frac + self.dir.into_inner() * 2.).cast());
+            if let Some(hit) = shape.call_object_method(mv.voxel_shape_clip, &[j_src.raw, j_dst.raw, pos.raw]).unwrap() {
+                if !hit.get_bool_field(mv.block_hit_result_miss) {
+                    self.dst = hit.get_object_field(mv.block_hit_result_pos).unwrap().read_vec3d().cast();
+                    self.hit = Some((covering.pos, hit.get_object_field(mv.block_hit_result_dir).unwrap().read_dir()));
+                    break;
+                }
+            }
         }
-        self.dst_block = covering.pos;
-        self.dst = covering.pos.cast::<f32>() + covering.frac;
         for &pos in self.chunks.difference(&old_chunks) {
             let c_state = dim.chunks.entry(pos).or_default();
             c_state.beams.insert(id);
@@ -255,7 +271,7 @@ pub fn add_beam(lk: &GlobalMtx, level: &impl JRef<'static>, tier: u8, src: Point
         src,
         dir,
         dst: <_>::default(),
-        dst_block: <_>::default(),
+        hit: None,
     });
     beam.recompute(level.jni(), &mut srv.players, dim, id);
     id
@@ -272,7 +288,7 @@ pub fn set_beam_dir(lk: &GlobalMtx, jni: &'static JNI, id: NonZeroUsize, dir: Un
 }
 
 impl ClientBeam {
-    pub fn render<'a>(&self, vb: &impl JRef<'a>, pose: &impl JRef<'a>, camera_pos: Point3<f32>) {
+    pub fn render<'a>(&self, tiers: &[Tier], vb: &impl JRef<'a>, pose: &impl JRef<'a>, camera_pos: Point3<f32>) {
         // TODO: frustum culling
         let mvc = objs().mv.client.uref();
         let src = self.src.cast::<f32>().map(|x| x + 0.5) - camera_pos;
@@ -283,11 +299,11 @@ impl ClientBeam {
         let n = b.cross(&dir) * 0.1;
         let b = n.cross(&dir);
         let pts = [src + n, dst + n, src + b, dst + b, src - n, dst - n, src - b, dst - b];
+        let color = tiers[self.tier as usize].color;
         for i in [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0] {
             let p = pts[i];
             vb.call_object_method(mvc.vertex_consumer_pos, &[pose.raw(), f_raw(p.x), f_raw(p.y), f_raw(p.z)]).unwrap();
-            // TODO: tier color
-            vb.call_object_method(mvc.vertex_consumer_color, &[f_raw(0.5), f_raw(0.), f_raw(0.), f_raw(1.)]).unwrap();
+            vb.call_object_method(mvc.vertex_consumer_color, &[f_raw(color.x), f_raw(color.y), f_raw(color.z), f_raw(1.)]).unwrap();
             vb.call_void_method(mvc.vertex_consumer_end_vertex, &[]).unwrap()
         }
     }

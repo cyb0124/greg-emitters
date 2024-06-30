@@ -336,14 +336,15 @@ fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: us
     let GlobalObjs { mv, mtx, gui_defs, .. } = objs();
     let level = BorrowedRef::new(jni, &level);
     let player = BorrowedRef::new(jni, &player);
+    let pos = BorrowedRef::new(jni, &pos);
     let false = level.level_is_client() else { return mv.interaction_result_success.raw };
     let true = player.is_instance_of(mv.server_player.raw) else { return mv.interaction_result_pass.raw };
     let lk = mtx.lock(jni).unwrap();
-    let tile = level.tile_at(pos).unwrap();
+    let tile = level.tile_at(&pos).unwrap();
     let tiers = lk.tiers.borrow();
     let item = tiers[lk.read_tile::<Emitter>(tile.borrow()).tier as usize].emitter_item.get().unwrap().with_jni(jni);
     let title = item.call_nonvirtual_object_method(mv.item.raw, mv.item_get_desc_id, &[]).unwrap().unwrap();
-    let data = postcard::to_allocvec(&BorrowedRef::new(jni, &pos).read_vec3i()).unwrap();
+    let data = postcard::to_allocvec(&pos.read_vec3i()).unwrap();
     let menu = EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into() };
     gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(menu), &title, data);
     mv.interaction_result_consume.raw

@@ -25,6 +25,7 @@ use core::{
 };
 use hashbrown::HashMap;
 use macros::dyn_abi;
+use nalgebra::{vector, Vector3};
 
 pub struct GlobalObjs {
     pub av: AV<'static>,
@@ -54,6 +55,7 @@ pub struct GlobalObjs {
 
 pub struct Tier {
     pub volt: i64,
+    pub color: Vector3<f32>,
     pub name: Arc<str>,
     pub has_emitter: bool,
     pub emitter_sprite: Option<Sprite>,
@@ -145,12 +147,13 @@ pub fn warn(jni: &JNI, text: impl Into<Vec<u8>>) {
 
 #[dyn_abi]
 fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
+    let GlobalObjs { av, mv, mtx, .. } = objs();
     let name = BorrowedRef::new(jni, &name);
     let name = name.utf_chars().unwrap();
     let suffix = b"_emitter";
     let true = name.ends_with(suffix) else { return 0 };
     let tier = str::from_utf8(&name[..name.len() - suffix.len()]).unwrap();
-    let lk = objs().mtx.lock(jni).unwrap();
+    let lk = mtx.lock(jni).unwrap();
     lk.gmv.get_or_init(|| {
         let gmv = GregMV::new(jni);
         let tier_volts = gmv.tier_volts.long_elems().unwrap();
@@ -161,7 +164,18 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
             let name = gmv.tier_names.get_object_elem(tier as _).unwrap().unwrap();
             let name = Arc::<str>::from(str::from_utf8(&*name.utf_chars().unwrap()).unwrap().to_lowercase());
             lookup.insert(name.clone(), tier as _);
-            tiers.push(Tier { volt, name, has_emitter: false, emitter_sprite: None, emitter_block: OnceCell::new(), emitter_item: OnceCell::new() })
+            let code = gmv.tier_fmt_names.get_object_elem(tier as _).unwrap().unwrap().chars().unwrap()[1];
+            let fmt = mv.chat_fmt.with_jni(jni).call_static_object_method(mv.chat_fmt_from_code, &[code as _]).unwrap().unwrap();
+            let color = fmt.get_object_field(mv.chat_fmt_color).unwrap().int_value(&av.jv).unwrap();
+            tiers.push(Tier {
+                volt,
+                color: vector![(color >> 16) as f32 / 255., ((color >> 8) & 255) as f32 / 255., (color & 255) as f32 / 255.],
+                name,
+                has_emitter: false,
+                emitter_sprite: None,
+                emitter_block: OnceCell::new(),
+                emitter_item: OnceCell::new(),
+            })
         }
         drop(tier_volts);
         gmv
