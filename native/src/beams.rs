@@ -10,7 +10,7 @@ use crate::{
         tile::TileExt,
     },
 };
-use core::{mem::take, num::NonZeroUsize};
+use core::{f32::consts::TAU, mem::take, num::NonZeroUsize};
 use hashbrown::{hash_map, hash_table, HashMap, HashSet, HashTable};
 use nalgebra::{Point2, Point3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct ClientBeam {
     tier: u8,
+    active: bool,
     src: Point3<i32>,
     dst: Point3<f32>,
 }
@@ -43,6 +44,7 @@ pub struct BeamState {
     dir: UnitVector3<f32>,
     dst: Point3<f32>,
     pub hit: Option<(Point3<i32>, u8)>,
+    pub active: bool,
 }
 
 #[derive(Default)]
@@ -121,7 +123,14 @@ impl BeamState {
 
     fn send_del_beam<'a>(id: NonZeroUsize, player: &impl JRef<'a>) { objs().net_defs.send_s2c(player, &S2C::DelBeam { id }) }
     fn send_set_beam<'a>(&self, id: NonZeroUsize, player: &impl JRef<'a>) {
-        objs().net_defs.send_s2c(player, &S2C::SetBeam { id, data: ClientBeam { tier: self.tier, src: self.src, dst: self.dst } })
+        let data = ClientBeam { tier: self.tier, active: self.active, src: self.src, dst: self.dst };
+        objs().net_defs.send_s2c(player, &S2C::SetBeam { id, data })
+    }
+
+    pub fn broadcast_set_beam(&self, jni: &JNI, id: NonZeroUsize) {
+        for player in &self.players {
+            self.send_set_beam(id, &player.0.with_jni(jni))
+        }
     }
 
     fn recompute(&mut self, jni: &'static JNI, players: &mut HashTable<PlayerState>, dim: &mut DimState, id: NonZeroUsize) {
@@ -175,9 +184,7 @@ impl BeamState {
             c_state.beams.remove(&id);
             del_chunk_if_empty(c_entry)
         }
-        for player in &self.players {
-            self.send_set_beam(id, &player.0.with_jni(jni))
-        }
+        self.broadcast_set_beam(jni, id)
     }
 }
 
@@ -272,6 +279,7 @@ pub fn add_beam(lk: &GlobalMtx, level: &impl JRef<'static>, tier: u8, src: Point
         dir,
         dst: <_>::default(),
         hit: None,
+        active: false,
     });
     beam.recompute(level.jni(), &mut srv.players, dim, id);
     id
@@ -288,7 +296,7 @@ pub fn set_beam_dir(lk: &GlobalMtx, jni: &'static JNI, id: NonZeroUsize, dir: Un
 }
 
 impl ClientBeam {
-    pub fn render<'a>(&self, tiers: &[Tier], vb: &impl JRef<'a>, pose: &impl JRef<'a>, camera_pos: Point3<f32>) {
+    pub fn render<'a>(&self, tiers: &[Tier], vb: &impl JRef<'a>, pose: &impl JRef<'a>, camera_pos: Point3<f32>, tick: i32, sub_tick: f32) {
         // TODO: frustum culling
         let mvc = objs().mv.client.uref();
         let src = self.src.cast::<f32>().map(|x| x + 0.5) - camera_pos;
@@ -296,8 +304,14 @@ impl ClientBeam {
         let dir = (dst - src).normalize();
         let mut b = Vector3::zeros();
         b[dir.abs().argmin().0] = 1.;
-        let n = b.cross(&dir) * 0.1;
-        let b = n.cross(&dir);
+        let radius = if self.active { 0.2 } else { 0.1 };
+        let mut n = b.cross(&dir) * radius; 
+        let mut b = n.cross(&dir);
+        if self.active {
+            const PERIOD: i32 = 10;
+            let (s, c) = libm::sincosf(((tick % PERIOD) as f32 + sub_tick) * (TAU / PERIOD as f32));
+            (n, b) = (c * n - s * b, s * n + c * b)
+        }
         let pts = [src + n, dst + n, src + b, dst + b, src - n, dst - n, src - b, dst - b];
         let color = tiers[self.tier as usize].color;
         for i in [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0] {
@@ -310,4 +324,3 @@ impl ClientBeam {
 }
 
 // TODO: change detection
-// TODO: larger beam radius if energy is being transfered

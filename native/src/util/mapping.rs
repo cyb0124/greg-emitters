@@ -193,6 +193,8 @@ pub struct ForgeMVC {
     pub render_lvl_stg_evt_renderer: usize,
     pub render_lvl_stg_evt_pose: usize,
     pub render_lvl_stg_evt_camera: usize,
+    pub render_lvl_stg_evt_tick: usize,
+    pub render_lvl_stg_evt_sub_tick: usize,
 }
 
 impl ForgeMV {
@@ -276,6 +278,8 @@ impl ForgeMV {
                     render_lvl_stg_evt_renderer: load(&fcn.render_lvl_stg_evt).get_field_id(c"levelRenderer", &cn.level_renderer.sig).unwrap(),
                     render_lvl_stg_evt_pose: load(&fcn.render_lvl_stg_evt).get_field_id(c"poseStack", &cn.pose_stack.sig).unwrap(),
                     render_lvl_stg_evt_camera: load(&fcn.render_lvl_stg_evt).get_field_id(c"camera", &cn.camera.sig).unwrap(),
+                    render_lvl_stg_evt_tick: load(&fcn.render_lvl_stg_evt).get_field_id(c"renderTick", c"I").unwrap(),
+                    render_lvl_stg_evt_sub_tick: load(&fcn.render_lvl_stg_evt).get_field_id(c"partialTick", c"F").unwrap(),
                 }
             }),
         }

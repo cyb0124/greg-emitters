@@ -277,25 +277,32 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
     let tile = lk.read_tile::<Emitter>(tile);
     let mut state = tile.server.borrow_mut();
     let volts = tile.volts(&*lk.tiers.borrow());
-    let mut drain = state.energy.min(1); // TODO: configurable
-    'fail: {
-        let true = state.energy >= volts else { break 'fail };
-        let Some(beam_id) = tile.beam_id.get() else { break 'fail };
-        let Some((pos, dir)) = lk.server_state.borrow().beams.get(&beam_id).unwrap().hit else { break 'fail };
-        let pos = write_block_pos(jni, pos);
-        let true = level.level_is_loaded(&pos) else { break 'fail };
-        let Some(hit_tile) = level.tile_at(&pos) else { break 'fail };
-        let gmv = lk.gmv.get().unwrap();
-        let dir = write_dir(jni, dir);
-        let cap = hit_tile.call_object_method(fmv.get_cap, &[gmv.energy_container_cap.raw, dir.raw]).unwrap().unwrap();
-        let cap = cap.call_object_method(fmv.lazy_opt_resolve, &[]).unwrap().unwrap();
-        let false = cap.opt_is_empty(&av.jv).unwrap() else { break 'fail };
-        let cap = cap.opt_get(&av.jv).unwrap();
-        let true = cap.call_bool_method(gmv.can_input_eu_from_side, &[dir.raw]).unwrap() else { break 'fail };
-        drain = drain.max(volts * cap.call_long_method(gmv.accept_eu, &[dir.raw, volts as _, 1]).unwrap())
+    let mut active = false;
+    if let Some(beam_id) = tile.beam_id.get() {
+        let mut srv = lk.server_state.borrow_mut();
+        let beam = srv.beams.get_mut(&beam_id).unwrap();
+        'fail: {
+            let true = state.energy >= volts else { break 'fail };
+            let Some((pos, dir)) = beam.hit else { break 'fail };
+            let pos = write_block_pos(jni, pos);
+            let true = level.level_is_loaded(&pos) else { break 'fail };
+            let Some(hit_tile) = level.tile_at(&pos) else { break 'fail };
+            let gmv = lk.gmv.get().unwrap();
+            let dir = write_dir(jni, dir);
+            let cap = hit_tile.call_object_method(fmv.get_cap, &[gmv.energy_container_cap.raw, dir.raw]).unwrap().unwrap();
+            let cap = cap.call_object_method(fmv.lazy_opt_resolve, &[]).unwrap().unwrap();
+            let false = cap.opt_is_empty(&av.jv).unwrap() else { break 'fail };
+            let cap = cap.opt_get(&av.jv).unwrap();
+            let true = cap.call_bool_method(gmv.can_input_eu_from_side, &[dir.raw]).unwrap() else { break 'fail };
+            active = cap.call_long_method(gmv.accept_eu, &[dir.raw, volts as _, 1]).unwrap() > 0
+        }
+        if beam.active != active {
+            beam.active = active;
+            beam.broadcast_set_beam(jni, beam_id)
+        }
     }
-    if drain > 0 {
-        state.energy -= drain;
+    if active || state.energy > 0 {
+        state.energy -= if active { volts } else { 1 }; // TODO: configurable quiescent draw
         if tile.beam_id.get().is_none() {
             if let Some(dir) = tile.compute_dir() {
                 tile.beam_id.set(Some(add_beam(&lk, &level, tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), dir)))

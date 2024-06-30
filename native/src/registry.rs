@@ -106,6 +106,8 @@ fn on_level_render(jni: &JNI, _: usize, evt: usize) {
     let pose = evt.get_object_field(fmvc.render_lvl_stg_evt_pose).unwrap().last_pose();
     let camera = evt.get_object_field(fmvc.render_lvl_stg_evt_camera).unwrap();
     let camera_pos = camera.get_object_field(mvc.camera_pos).unwrap().read_vec3d().cast();
+    let tick = evt.get_int_field(fmvc.render_lvl_stg_evt_tick);
+    let sub_tick = evt.get_float_field(fmvc.render_lvl_stg_evt_sub_tick);
     let renderer = evt.get_object_field(fmvc.render_lvl_stg_evt_renderer).unwrap();
     let buffers = renderer.get_object_field(mvc.level_renderer_buffers).unwrap();
     let source = buffers.get_object_field(mvc.render_buffers_buffer_source).unwrap();
@@ -113,7 +115,7 @@ fn on_level_render(jni: &JNI, _: usize, evt: usize) {
     let lk = objs().mtx.lock(jni).unwrap();
     let tiers = lk.tiers.borrow();
     for beam in objs().mtx.lock(jni).unwrap().client_state.borrow().beams.values() {
-        beam.render(&*tiers, &vb, &pose, camera_pos)
+        beam.render(&*tiers, &vb, &pose, camera_pos, tick, sub_tick)
     }
     source.call_void_method(mvc.buffer_source_end_batch, &[mvc.render_type_lightning.raw]).unwrap()
 }
