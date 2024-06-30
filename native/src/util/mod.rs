@@ -24,6 +24,7 @@ use core::{
     mem::transmute_copy,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use serde::Serialize;
 
 impl<'a, T: JRef<'a>> UtilExt<'a> for T {}
 pub trait UtilExt<'a>: JRef<'a> {
@@ -31,6 +32,13 @@ pub trait UtilExt<'a>: JRef<'a> {
     fn static_field_1(&self, name: &CStr, sig: &CStr) -> GlobalRef<'a> {
         self.get_static_object_field(self.get_static_field_id(name, sig).unwrap()).unwrap().new_global_ref().unwrap()
     }
+}
+
+pub fn serialize_to_byte_array<'a>(jni: &'a JNI, data: &impl Serialize) -> LocalRef<'a> {
+    let data = postcard::to_allocvec(data).unwrap();
+    let ba = jni.new_byte_array(data.len() as _).unwrap();
+    ba.write_byte_array(&*data, 0).unwrap();
+    ba
 }
 
 #[derive(Default)]

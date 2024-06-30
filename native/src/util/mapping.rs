@@ -29,8 +29,8 @@ pub struct ForgeCN<T> {
     pub chunk_watch_evt: T,
     pub chunk_unwatch_evt: T,
     // Client
-    pub render_level_stage_evt: T,
-    pub render_level_stage: T,
+    pub render_lvl_stg_evt: T,
+    pub render_lvl_stg: T,
     pub fml_client_setup_evt: T,
     pub renderers_evt: T,
     pub atlas_evt: T,
@@ -63,8 +63,8 @@ impl ForgeCN<Arc<CSig>> {
             chunk_watch_evt: b"net.minecraftforge.event.level.ChunkWatchEvent$Watch",
             chunk_unwatch_evt: b"net.minecraftforge.event.level.ChunkWatchEvent$UnWatch",
             // Client
-            render_level_stage_evt: b"net.minecraftforge.client.event.RenderLevelStageEvent",
-            render_level_stage: b"net.minecraftforge.client.event.RenderLevelStageEvent$Stage",
+            render_lvl_stg_evt: b"net.minecraftforge.client.event.RenderLevelStageEvent",
+            render_lvl_stg: b"net.minecraftforge.client.event.RenderLevelStageEvent$Stage",
             fml_client_setup_evt: b"net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent",
             renderers_evt: b"net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers",
             atlas_evt: b"net.minecraftforge.client.event.TextureStitchEvent",
@@ -82,6 +82,7 @@ pub struct ForgeMN {
     pub network_hooks_open_screen: MSig,
     pub network_reg_new_simple_channel: MSig,
     pub simple_channel_reg_msg: MSig,
+    pub simple_channel_send_to: MSig,
     pub gen_enqueue_work: MSig,
 }
 
@@ -126,6 +127,11 @@ impl ForgeMN {
                     fcn.msg_handler.sig.to_bytes(),
                 ),
             },
+            simple_channel_send_to: MSig {
+                owner: fcn.simple_channel.clone(),
+                name: cs("sendTo"),
+                sig: msig([b"Ljava/lang/Object;", cn.conn.sig.to_bytes(), fcn.network_dir.sig.to_bytes()], b"V"),
+            },
             gen_enqueue_work: MSig {
                 owner: fcn.network_ctx.clone(),
                 name: cs("enqueueWork"),
@@ -165,6 +171,7 @@ pub struct ForgeMV {
     pub network_reg_new_simple_channel: usize,
     pub simple_channel_reg_msg: usize,
     pub simple_channel_send_to_server: usize,
+    pub simple_channel_send_to: usize,
     pub network_ctx_set_handled: usize,
     pub network_ctx_get_dir: usize,
     pub network_ctx_get_sender: usize,
@@ -180,8 +187,10 @@ pub struct ForgeMV {
 pub struct ForgeMVC {
     pub renderers_evt_reg: usize,
     pub atlas_evt_get_atlas: usize,
-    pub render_level_stage_after_particles: GlobalRef<'static>,
-    pub render_level_stage_evt_stage: usize,
+    pub render_lvl_stg_after_particles: GlobalRef<'static>,
+    pub render_lvl_stg_evt_stage: usize,
+    pub render_lvl_stg_evt_renderer: usize,
+    pub render_lvl_stg_evt_pose: usize,
 }
 
 impl ForgeMV {
@@ -242,6 +251,7 @@ impl ForgeMV {
             network_reg,
             simple_channel_reg_msg: fmn.simple_channel_reg_msg.get_method_id(&simple_channel).unwrap(),
             simple_channel_send_to_server: simple_channel.get_method_id(c"sendToServer", c"(Ljava/lang/Object;)V").unwrap(),
+            simple_channel_send_to: fmn.simple_channel_send_to.get_method_id(&simple_channel).unwrap(),
             network_ctx_set_handled: network_ctx.get_method_id(c"setPacketHandled", c"(Z)V").unwrap(),
             network_ctx_get_dir: network_ctx.get_method_id(c"getDirection", &msig([], fcn.network_dir.sig.to_bytes())).unwrap(),
             network_ctx_get_sender: network_ctx.get_method_id(c"getSender", &msig([], cn.server_player.sig.to_bytes())).unwrap(),
@@ -258,8 +268,10 @@ impl ForgeMV {
                 ForgeMVC {
                     renderers_evt_reg: renderers_evt.get_method_id(c"registerBlockEntityRenderer", &renderers_evt_reg).unwrap(),
                     atlas_evt_get_atlas: atlas_evt.get_method_id(c"getAtlas", &msig([], cn.atlas.sig.to_bytes())).unwrap(),
-                    render_level_stage_after_particles: load(&fcn.render_level_stage).static_field_1(c"AFTER_PARTICLES", &fcn.render_level_stage.sig),
-                    render_level_stage_evt_stage: load(&fcn.render_level_stage_evt).get_field_id(c"stage", &fcn.render_level_stage.sig).unwrap(),
+                    render_lvl_stg_after_particles: load(&fcn.render_lvl_stg).static_field_1(c"AFTER_PARTICLES", &fcn.render_lvl_stg.sig),
+                    render_lvl_stg_evt_stage: load(&fcn.render_lvl_stg_evt).get_field_id(c"stage", &fcn.render_lvl_stg.sig).unwrap(),
+                    render_lvl_stg_evt_renderer: load(&fcn.render_lvl_stg_evt).get_field_id(c"levelRenderer", &cn.level_renderer.sig).unwrap(),
+                    render_lvl_stg_evt_pose: load(&fcn.render_lvl_stg_evt).get_field_id(c"poseStack", &cn.pose_stack.sig).unwrap(),
                 }
             }),
         }
@@ -303,7 +315,7 @@ pub struct CN<T> {
     pub interaction_result: T,
     pub s2c_tile_data: T,
     pub nbt_compound: T,
-    pub packet: T,
+    pub pkt: T,
     pub living_entity: T,
     pub dir: T,
     pub loot_builder: T,
@@ -330,6 +342,8 @@ pub struct CN<T> {
     pub tile_ticker: T,
     pub server_level: T,
     pub chunk_pos: T,
+    pub conn: T,
+    pub server_pkt_listener_impl: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -363,6 +377,7 @@ pub struct CN<T> {
     pub sound_mgr: T,
     pub sound_inst: T,
     pub simple_sound_inst: T,
+    pub level_renderer: T,
 }
 
 impl CN<Arc<CSig>> {
@@ -403,7 +418,7 @@ impl CN<Arc<CSig>> {
             interaction_result: b"net.minecraft.world.InteractionResult",
             s2c_tile_data: b"net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket",
             nbt_compound: b"net.minecraft.nbt.CompoundTag",
-            packet: b"net.minecraft.network.protocol.Packet",
+            pkt: b"net.minecraft.network.protocol.Packet",
             living_entity: b"net.minecraft.world.entity.LivingEntity",
             dir: b"net.minecraft.core.Direction",
             loot_builder: b"net.minecraft.world.level.storage.loot.LootParams$Builder",
@@ -430,6 +445,8 @@ impl CN<Arc<CSig>> {
             tile_ticker: b"net.minecraft.world.level.block.entity.BlockEntityTicker",
             server_level: b"net.minecraft.server.level.ServerLevel",
             chunk_pos: b"net.minecraft.world.level.ChunkPos",
+            conn: b"net.minecraft.network.Connection",
+            server_pkt_listener_impl: b"net.minecraft.server.network.ServerGamePacketListenerImpl",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -463,6 +480,7 @@ impl CN<Arc<CSig>> {
             sound_mgr: b"net.minecraft.client.sounds.SoundManager",
             sound_inst: b"net.minecraft.client.resources.sounds.SoundInstance",
             simple_sound_inst: b"net.minecraft.client.resources.sounds.SimpleSoundInstance",
+            level_renderer: b"net.minecraft.client.renderer.LevelRenderer",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -498,7 +516,7 @@ pub struct MN<T> {
     pub tile_init: T,
     pub tile_load: T,
     pub tile_get_update_tag: T,
-    pub tile_get_update_packet: T,
+    pub tile_get_update_pkt: T,
     pub tile_save_additional: T,
     pub tile_level: T,
     pub tile_pos: T,
@@ -545,6 +563,8 @@ pub struct MN<T> {
     pub tile_ticker_tick: T,
     pub chunk_pos_x: T,
     pub chunk_pos_z: T,
+    pub server_player_pkt_listener: T,
+    pub server_pkt_listener_impl_conn: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -729,7 +749,7 @@ impl MN<MSig> {
             },
             tile_load: MSig { owner: cn.tile.clone(), name: cs("m_142466_"), sig: msig([cn.nbt_compound.sig.to_bytes()], b"V") },
             tile_get_update_tag: MSig { owner: cn.tile.clone(), name: cs("m_5995_"), sig: msig([], cn.nbt_compound.sig.to_bytes()) },
-            tile_get_update_packet: MSig { owner: cn.tile.clone(), name: cs("m_58483_"), sig: msig([], cn.packet.sig.to_bytes()) },
+            tile_get_update_pkt: MSig { owner: cn.tile.clone(), name: cs("m_58483_"), sig: msig([], cn.pkt.sig.to_bytes()) },
             tile_save_additional: MSig { owner: cn.tile.clone(), name: cs("m_183515_"), sig: msig([cn.nbt_compound.sig.to_bytes()], b"V") },
             tile_level: MSig { owner: cn.tile.clone(), name: cs("f_58857_"), sig: cn.level.sig.clone() },
             tile_pos: MSig { owner: cn.tile.clone(), name: cs("f_58858_"), sig: cn.block_pos.sig.clone() },
@@ -832,6 +852,8 @@ impl MN<MSig> {
             },
             chunk_pos_x: MSig { owner: cn.chunk_pos.clone(), name: cs("f_45578_"), sig: cs("I") },
             chunk_pos_z: MSig { owner: cn.chunk_pos.clone(), name: cs("f_45579_"), sig: cs("I") },
+            server_player_pkt_listener: MSig { owner: cn.server_player.clone(), name: cs("f_8906_"), sig: cn.server_pkt_listener_impl.sig.clone() },
+            server_pkt_listener_impl_conn: MSig { owner: cn.server_pkt_listener_impl.clone(), name: cs("f_9742_"), sig: cn.conn.sig.clone() },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -1044,6 +1066,8 @@ pub struct MV {
     pub interaction_result_success: GlobalRef<'static>,
     pub interaction_result_consume: GlobalRef<'static>,
     pub server_player: GlobalRef<'static>,
+    pub server_player_pkt_listener: usize,
+    pub server_pkt_listener_impl_conn: usize,
     pub inventory_player: usize,
     pub entity_level: usize,
     pub container: GlobalRef<'static>,
@@ -1152,6 +1176,7 @@ impl MV {
         let container = load(&cn.container);
         let player = load(&cn.player);
         let chunk_pos = load(&cn.chunk_pos);
+        let server_player = load(&cn.server_player);
         MV {
             base_tile_block_init: mn.base_tile_block_init.get_method_id(&base_tile_block).unwrap(),
             block_default_state: mn.block_default_state.get_method_id(&block).unwrap(),
@@ -1215,7 +1240,9 @@ impl MV {
             interaction_result_pass: interaction_result.static_field_1(c"PASS", &cn.interaction_result.sig),
             interaction_result_success: interaction_result.static_field_1(c"SUCCESS", &cn.interaction_result.sig),
             interaction_result_consume: interaction_result.static_field_1(c"CONSUME", &cn.interaction_result.sig),
-            server_player: load(&cn.server_player),
+            server_player_pkt_listener: mn.server_player_pkt_listener.get_field_id(&server_player).unwrap(),
+            server_player: server_player,
+            server_pkt_listener_impl_conn: mn.server_pkt_listener_impl_conn.get_field_id(&load(&cn.server_pkt_listener_impl)).unwrap(),
             inventory_player: mn.inventory_player.get_field_id(&load(&cn.inventory)).unwrap(),
             entity_level: mn.entity_level.get_method_id(&load(&cn.entity)).unwrap(),
             container_still_valid: mn.container_still_valid.get_static_method_id(&container).unwrap(),
@@ -1367,7 +1394,7 @@ pub struct GregMN {
     pub get_input_eu_per_sec: MSig,
     pub pipe_block_get_node: MSig,
     pub pipe_block_can_connect: MSig,
-    pub pipe_node_set_connection: MSig,
+    pub pipe_node_set_conn: MSig,
 }
 
 impl GregMN {
@@ -1400,11 +1427,7 @@ impl GregMN {
                 name: cs("canPipeConnectToBlock"),
                 sig: msig([gcn.pipe_node.sig.to_bytes(), cn.dir.sig.to_bytes(), cn.tile.sig.to_bytes()], b"Z"),
             },
-            pipe_node_set_connection: MSig {
-                owner: gcn.pipe_node.clone(),
-                name: cs("setConnection"),
-                sig: msig([cn.dir.sig.to_bytes(), b"ZZ"], b"V"),
-            },
+            pipe_node_set_conn: MSig { owner: gcn.pipe_node.clone(), name: cs("setConnection"), sig: msig([cn.dir.sig.to_bytes(), b"ZZ"], b"V") },
         }
     }
 }
@@ -1417,7 +1440,7 @@ pub struct GregMV {
     pub pipe_block: GlobalRef<'static>,
     pub pipe_block_get_node: usize,
     pub pipe_block_can_connect: usize,
-    pub pipe_node_set_connection: usize,
+    pub pipe_node_set_conn: usize,
 }
 
 impl GregMV {
@@ -1433,7 +1456,7 @@ impl GregMV {
             energy_container_cap: load(&gcn.caps).static_field_1(c"CAPABILITY_ENERGY_CONTAINER", &fcn.cap.sig),
             pipe_block_get_node: gmn.pipe_block_get_node.get_method_id(&pipe_block).unwrap(),
             pipe_block_can_connect: gmn.pipe_block_can_connect.get_method_id(&pipe_block).unwrap(),
-            pipe_node_set_connection: gmn.pipe_node_set_connection.get_method_id(&load(&gcn.pipe_node)).unwrap(),
+            pipe_node_set_conn: gmn.pipe_node_set_conn.get_method_id(&load(&gcn.pipe_node)).unwrap(),
             pipe_block,
         }
     }

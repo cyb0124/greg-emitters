@@ -33,7 +33,7 @@ pub mod jvm;
 pub mod mapping_base;
 mod packets;
 mod registry;
-pub mod util;
+mod util;
 
 extern crate alloc;
 use alloc::{ffi::CString, format};

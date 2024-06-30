@@ -1,5 +1,6 @@
 use crate::{
     asm::*,
+    beams::{add_beam, del_beam},
     emitter_gui::{EmitterMenu, EmitterMenuType},
     global::{GlobalMtx, GlobalObjs, Tier},
     jvm::*,
@@ -18,11 +19,12 @@ use alloc::{format, sync::Arc, vec::Vec};
 use core::{
     any::Any,
     array,
-    cell::{OnceCell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     f32::consts::{PI, TAU},
+    num::NonZeroUsize,
 };
 use macros::dyn_abi;
-use nalgebra::{point, vector, Affine3, Point, Scale3, Translation3, UnitQuaternion};
+use nalgebra::{point, vector, Affine3, Point, Scale3, Translation3, Unit, UnitQuaternion, UnitVector3};
 use postcard::{de_flavors::Slice, Deserializer, Result};
 use serde::{Deserialize, Serialize};
 use simba::scalar::SupersetOf;
@@ -55,6 +57,7 @@ pub struct Emitter {
     energy_cap: GlobalRef<'static>,
     pub common: RefCell<CommonData>,
     server: RefCell<ServerData>,
+    pub beam_id: Cell<Option<NonZeroUsize>>,
 }
 
 impl Cleanable for Emitter {
@@ -64,6 +67,10 @@ impl Cleanable for Emitter {
 impl Emitter {
     fn volts(&self, tiers: &[Tier]) -> i64 { tiers[self.tier as usize].volt }
     fn eu_capacity(&self, tiers: &[Tier]) -> i64 { self.volts(tiers) * 2 }
+    pub fn compute_dir(&self) -> Option<UnitVector3<f32>> {
+        let CommonData { dir, polar, azimuth } = *self.common.borrow();
+        Some(DIR_ATTS[dir? as usize] * DIR_ATTS[0] * UnitQuaternion::from_euler_angles(polar, azimuth, 0.) * Unit::new_unchecked(vector![0., 1., 0.]))
+    }
 }
 
 struct EnergyContainer {
@@ -151,7 +158,6 @@ impl EmitterBlocks {
 
 impl Tile for Emitter {
     fn any(&self) -> &dyn Any { self }
-    fn invalidate_caps(&self, jni: &JNI) { self.energy_cap.with_jni(jni).lazy_opt_invalidate() }
     fn save_common(&self) -> Vec<u8> { postcard::to_allocvec(&*self.common.borrow()).unwrap() }
     fn save_server(&self) -> Vec<u8> { postcard::to_allocvec(&*self.server.borrow()).unwrap() }
 
@@ -165,6 +171,13 @@ impl Tile for Emitter {
 
     fn get_cap(&self, cap: BorrowedRef) -> Option<usize> {
         cap.is_same_object(objs().mtx.lock(cap.jni).unwrap().gmv.get().unwrap().energy_container_cap.raw).then(|| self.energy_cap.raw)
+    }
+
+    fn invalidate_caps(&self, jni: &JNI, lk: &GlobalMtx) {
+        self.energy_cap.with_jni(jni).lazy_opt_invalidate();
+        if let Some(beam_id) = self.beam_id.replace(None) {
+            del_beam(jni, lk, beam_id)
+        }
     }
 
     fn render(&self, lk: &GlobalMtx, mut dc: DrawContext, mut tf: Affine3<f32>) {
@@ -249,7 +262,7 @@ impl TileSupplier for EmitterSupplier {
         let tier = defs.block.read(&lk, block.borrow()).tier;
         let energy_container = Arc::new(EnergyContainer { tile: OnceCell::new() });
         let energy_cap = defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap();
-        let emitter = Arc::new(Emitter { tier, energy_cap, common: <_>::default(), server: <_>::default() });
+        let emitter = Arc::new(Emitter { tier, energy_cap, common: <_>::default(), server: <_>::default(), beam_id: None.into() });
         let tile = objs().tile_defs.new_tile(pos.jni, defs.tile_type.raw, pos.raw, state.raw, emitter);
         energy_container.tile.set(tile.new_weak_global_ref().unwrap()).ok().unwrap();
         Some(tile)
@@ -257,8 +270,22 @@ impl TileSupplier for EmitterSupplier {
 }
 
 #[dyn_abi]
-fn on_tick(jni: &JNI, _this: usize, _pos: usize, _state: usize, tile: usize) {
-    // TODO:
+fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: usize, tile: usize) {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let tile = BorrowedRef::new(jni, &tile);
+    let tile = lk.read_tile::<Emitter>(tile);
+    let mut state = tile.server.borrow_mut();
+    if state.energy > 0 {
+        // TODO: configurable
+        state.energy -= 1;
+        if tile.beam_id.get().is_none() {
+            if let Some(dir) = tile.compute_dir() {
+                tile.beam_id.set(Some(add_beam(&lk, &BorrowedRef::new(jni, &level), tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), dir)))
+            }
+        }
+    } else if let Some(beam_id) = tile.beam_id.replace(None) {
+        del_beam(jni, &lk, beam_id)
+    }
 }
 
 #[dyn_abi]
@@ -377,6 +404,7 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
     if volts > emitter.volts(&tiers) {
         let state = mv.blocks_fire.with_jni(jni).call_object_method(mv.block_default_state, &[]).unwrap().unwrap();
         tile.tile_level().unwrap().call_bool_method(mv.level_set_block_and_update, &[tile.tile_pos().raw, state.raw]).unwrap();
+        // TODO: smoke particle
         return 1;
     }
     let mut data = emitter.server.borrow_mut();

@@ -1,7 +1,7 @@
 use super::{
     cleaner::Cleanable,
     mapping::{ForgeMV, MV},
-    ClassBuilder, ClassNamer, ThinWrapper,
+    serialize_to_byte_array, ClassBuilder, ClassNamer, ThinWrapper,
 };
 use crate::{
     asm::*,
@@ -72,10 +72,14 @@ impl NetworkDefs {
     }
 
     pub fn send_c2s(&self, jni: &JNI, data: &impl Serialize) {
-        let data = postcard::to_allocvec(data).unwrap();
-        let ba = jni.new_byte_array(data.len() as _).unwrap();
-        ba.write_byte_array(&*data, 0).unwrap();
-        self.channel.with_jni(jni).call_void_method(objs().fmv.simple_channel_send_to_server, &[ba.raw]).unwrap()
+        self.channel.with_jni(jni).call_void_method(objs().fmv.simple_channel_send_to_server, &[serialize_to_byte_array(jni, data).raw]).unwrap()
+    }
+
+    pub fn send_s2c<'a>(&self, player: &impl JRef<'a>, data: &impl Serialize) {
+        let GlobalObjs { mv, fmv, .. } = objs();
+        let conn = player.get_object_field(mv.server_player_pkt_listener).unwrap().get_object_field(mv.server_pkt_listener_impl_conn).unwrap();
+        let ba = serialize_to_byte_array(conn.jni, data);
+        self.channel.with_jni(conn.jni).call_void_method(fmv.simple_channel_send_to, &[ba.raw, conn.raw, fmv.network_dir_s2c.raw]).unwrap()
     }
 }
 
@@ -103,7 +107,7 @@ fn decode_msg(jni: &JNI, _: usize, buf: usize) -> usize {
 }
 
 #[dyn_abi]
-fn task_run(jni: &JNI, this: usize) {
+fn task_run(jni: &'static JNI, this: usize) {
     let GlobalObjs { mtx, fmv, mv, net_defs, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let task = net_defs.task.read(&lk, BorrowedRef::new(jni, &this));

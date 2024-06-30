@@ -1,5 +1,5 @@
 use crate::{
-    beams::ClientBeam,
+    beams::{set_beam_dir, ClientBeam},
     emitter_blocks::Emitter,
     emitter_gui::EmitterMenu,
     global::GlobalMtx,
@@ -8,7 +8,10 @@ use crate::{
     util::{gui::GUIExt, tile::TileExt},
 };
 use anyhow::{anyhow, ensure, Context, Result};
-use core::f32::consts::{FRAC_PI_2, TAU};
+use core::{
+    f32::consts::{FRAC_PI_2, TAU},
+    num::NonZeroUsize,
+};
 use num_traits::Euclid;
 use serde::{Deserialize, Serialize};
 
@@ -19,8 +22,8 @@ pub enum C2S {
 
 #[derive(Serialize, Deserialize)]
 pub enum S2C {
-    SetBeam { id: usize, data: ClientBeam },
-    DelBeam { id: usize },
+    SetBeam { id: NonZeroUsize, data: ClientBeam },
+    DelBeam { id: NonZeroUsize },
 }
 
 pub fn handle_s2c(lk: &GlobalMtx, data: &[u8]) -> Result<()> {
@@ -35,7 +38,7 @@ pub fn handle_s2c(lk: &GlobalMtx, data: &[u8]) -> Result<()> {
     })
 }
 
-pub fn handle_c2s(lk: &GlobalMtx, data: &[u8], player: BorrowedRef) -> Result<()> {
+pub fn handle_c2s(lk: &GlobalMtx, data: &[u8], player: BorrowedRef<'static, '_>) -> Result<()> {
     let gui_defs = &objs().gui_defs;
     let data: C2S = postcard::from_bytes(data).map_err(|e| anyhow!("{e}"))?;
     Ok(match data {
@@ -51,6 +54,11 @@ pub fn handle_c2s(lk: &GlobalMtx, data: &[u8], player: BorrowedRef) -> Result<()
             common.polar = if polar.is_finite() { polar.clamp(0., FRAC_PI_2) } else { 0. };
             common.azimuth = if azimuth.is_finite() { azimuth.rem_euclid(&TAU) } else { 0. };
             drop(common);
+            if let Some(beam_id) = tile.beam_id.get() {
+                if let Some(dir) = tile.compute_dir() {
+                    set_beam_dir(lk, level.jni, beam_id, dir)
+                }
+            }
             level.level_mark_for_broadcast(&j_tile.tile_pos())
         }
     })

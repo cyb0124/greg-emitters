@@ -50,7 +50,7 @@ pub trait Tile: Cleanable {
     fn load_common<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()>;
     fn load_server<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()>;
     fn get_cap(&self, cap: BorrowedRef) -> Option<usize>;
-    fn invalidate_caps(&self, jni: &JNI);
+    fn invalidate_caps(&self, jni: &JNI, lk: &GlobalMtx);
     fn render(&self, lk: &GlobalMtx, dc: DrawContext, tf: Affine3<f32>);
 }
 
@@ -69,7 +69,7 @@ impl TileDefs {
             .native_2(&fmn.get_cap, get_cap_dyn())
             .native_2(&fmn.invalidate_caps, invalidate_caps_dyn())
             .insns(
-                &mn.tile_get_update_packet,
+                &mn.tile_get_update_pkt,
                 [
                     av.new_var_insn(jni, OP_ALOAD, 0).unwrap(),
                     mn.s2c_tile_data_create.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap(),
@@ -175,5 +175,6 @@ fn invalidate_caps(jni: &JNI, this: usize) {
     let GlobalObjs { fmv, tile_defs, mtx, .. } = objs();
     let this = BorrowedRef::new(jni, &this);
     this.call_nonvirtual_void_method(fmv.cap_provider.raw, fmv.invalidate_caps, &[]).unwrap();
-    tile_defs.tile.read(&mtx.lock(jni).unwrap(), this).invalidate_caps(jni)
+    let lk = mtx.lock(jni).unwrap();
+    tile_defs.tile.read(&lk, this).invalidate_caps(jni, &lk)
 }

@@ -83,6 +83,6 @@ fn place_block(jni: &'static JNI, this: usize, ctx: usize, state: usize) -> bool
     let Some(pipe_node) = pipe_block.call_object_method(gmv.pipe_block_get_node, &[level.raw, pos.raw]).unwrap() else { return true };
     let opp_obj = write_dir(jni, opp);
     let true = pipe_block.call_bool_method(gmv.pipe_block_can_connect, &[pipe_node.raw, opp_obj.raw, tile.raw]).unwrap() else { return true };
-    pipe_node.call_void_method(gmv.pipe_node_set_connection, &[dir_obj.raw, 1, 0]).unwrap();
+    pipe_node.call_void_method(gmv.pipe_node_set_conn, &[dir_obj.raw, 1, 0]).unwrap();
     true
 }
