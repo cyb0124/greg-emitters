@@ -34,7 +34,7 @@ struct PlayerState {
     beams: HashMap<NonZeroUsize, usize>,
 }
 
-struct BeamState {
+pub struct BeamState {
     level: (GlobalRef<'static>, i32),
     players: HashTable<(GlobalRef<'static>, i32)>,
     chunks: HashSet<Point2<i32>>,
@@ -42,7 +42,7 @@ struct BeamState {
     src: Point3<i32>,
     dir: UnitVector3<f32>,
     dst: Point3<f32>,
-    hit: Option<(Point3<i32>, u8)>,
+    pub hit: Option<(Point3<i32>, u8)>,
 }
 
 #[derive(Default)]
@@ -59,7 +59,7 @@ struct DimState {
 pub struct ServerState {
     dims: HashTable<DimState>,
     players: HashTable<PlayerState>,
-    beams: HashMap<NonZeroUsize, BeamState>,
+    pub beams: HashMap<NonZeroUsize, BeamState>,
     next_beam_id: NonZeroUsize,
 }
 
@@ -133,13 +133,13 @@ impl BeamState {
         let level = self.level.0.with_jni(jni);
         loop {
             covering.step();
+            self.chunks.insert(block_to_chunk(covering.pos));
             let pos = write_block_pos(jni, covering.pos);
             if !level.level_is_loaded(&pos) {
                 self.dst = covering.pos.cast::<f32>() + covering.frac;
                 self.hit = None;
                 break;
             }
-            self.chunks.insert(block_to_chunk(covering.pos));
             let state = level.block_state_at(&pos);
             let args = [level.raw, pos.raw, mv.collision_ctx_empty.raw];
             let shape = state.call_object_method(mv.block_state_get_visual_shape, &args).unwrap().unwrap();
@@ -308,3 +308,6 @@ impl ClientBeam {
         }
     }
 }
+
+// TODO: change detection
+// TODO: larger beam radius if energy is being transfered

@@ -159,6 +159,7 @@ pub struct ForgeMV {
     pub lazy_opt: GlobalRef<'static>,
     pub lazy_opt_of: usize,
     pub lazy_opt_invalidate: usize,
+    pub lazy_opt_resolve: usize,
     pub cap_provider: GlobalRef<'static>,
     pub get_cap: usize,
     pub invalidate_caps: usize,
@@ -239,6 +240,7 @@ impl ForgeMV {
             forge_reg_reg: load(&fcn.forge_reg).get_method_id(c"register", c"(Ljava/lang/String;Ljava/lang/Object;)V").unwrap(),
             lazy_opt_of: lazy_opt.get_static_method_id(c"of", &msig([fcn.non_null_supplier.sig.to_bytes()], fcn.lazy_opt.sig.to_bytes())).unwrap(),
             lazy_opt_invalidate: lazy_opt.get_method_id(c"invalidate", c"()V").unwrap(),
+            lazy_opt_resolve: lazy_opt.get_method_id(c"resolve", c"()Ljava/util/Optional;").unwrap(),
             lazy_opt,
             get_cap: fmn.get_cap.get_method_id(&cap_provider).unwrap(),
             invalidate_caps: fmn.invalidate_caps.get_method_id(&cap_provider).unwrap(),
@@ -1050,7 +1052,7 @@ impl MN<MSig> {
         };
         if !fmv.fml_naming_is_srg {
             let from = av.ldr.jni.new_utf(c"srg").unwrap();
-            let mapper = fmv.cml_inst.call_object_method(fmv.cml_get_mapper, &[from.raw]).unwrap().unwrap().opt_get(&av.jv).unwrap().unwrap();
+            let mapper = fmv.cml_inst.call_object_method(fmv.cml_get_mapper, &[from.raw]).unwrap().unwrap().opt_get(&av.jv).unwrap();
             mn.apply(|x| {
                 let name = mapper.jni.new_utf(&x.name).unwrap();
                 let name = mapper.bifunc_apply(&av.jv, if x.is_method() { fmv.naming_domain_m.raw } else { fmv.naming_domain_f.raw }, name.raw);
@@ -1538,6 +1540,8 @@ pub struct GregMV {
     pub pipe_block_get_node: usize,
     pub pipe_block_can_connect: usize,
     pub pipe_node_set_conn: usize,
+    pub can_input_eu_from_side: usize,
+    pub accept_eu: usize,
 }
 
 impl GregMV {
@@ -1546,6 +1550,7 @@ impl GregMV {
         let load = |csig: &Arc<CSig>| av.ldr.with_jni(jni).load_class(&av.jv, &csig.dot).unwrap().new_global_ref().unwrap();
         let values = load(&gcn.values);
         let pipe_block = load(&gcn.pipe_block);
+        let energy_container = load(&gcn.energy_container);
         Self {
             tier_names: values.static_field_1(c"VN", c"[Ljava/lang/String;"),
             tier_volts: values.static_field_1(c"V", c"[J"),
@@ -1554,8 +1559,10 @@ impl GregMV {
             energy_container_cap: load(&gcn.caps).static_field_1(c"CAPABILITY_ENERGY_CONTAINER", &fcn.cap.sig),
             pipe_block_get_node: gmn.pipe_block_get_node.get_method_id(&pipe_block).unwrap(),
             pipe_block_can_connect: gmn.pipe_block_can_connect.get_method_id(&pipe_block).unwrap(),
-            pipe_node_set_conn: gmn.pipe_node_set_conn.get_method_id(&load(&gcn.pipe_node)).unwrap(),
             pipe_block,
+            pipe_node_set_conn: gmn.pipe_node_set_conn.get_method_id(&load(&gcn.pipe_node)).unwrap(),
+            can_input_eu_from_side: gmn.can_input_eu_from_side.get_method_id(&energy_container).unwrap(),
+            accept_eu: gmn.accept_eu.get_method_id(&energy_container).unwrap(),
         }
     }
 }

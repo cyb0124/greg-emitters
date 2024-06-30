@@ -10,7 +10,7 @@ use crate::{
     util::{
         cleaner::Cleanable,
         client::SolidRenderer,
-        geometry::{lerp, new_voxel_shape, GeomExt, DIR_ATTS},
+        geometry::{lerp, new_voxel_shape, write_block_pos, write_dir, GeomExt, DIR_ATTS},
         tile::{Tile, TileExt, TileSupplier},
         ClassBuilder, ThinWrapper,
     },
@@ -270,16 +270,35 @@ impl TileSupplier for EmitterSupplier {
 
 #[dyn_abi]
 fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: usize, tile: usize) {
-    let lk = objs().mtx.lock(jni).unwrap();
+    let GlobalObjs { av, fmv, mtx, .. } = objs();
+    let lk = mtx.lock(jni).unwrap();
     let tile = BorrowedRef::new(jni, &tile);
+    let level = BorrowedRef::new(jni, &level);
     let tile = lk.read_tile::<Emitter>(tile);
     let mut state = tile.server.borrow_mut();
-    if state.energy > 0 {
-        // TODO: configurable
-        state.energy -= 1;
+    let volts = tile.volts(&*lk.tiers.borrow());
+    let mut drain = state.energy.min(1); // TODO: configurable
+    'fail: {
+        let true = state.energy >= volts else { break 'fail };
+        let Some(beam_id) = tile.beam_id.get() else { break 'fail };
+        let Some((pos, dir)) = lk.server_state.borrow().beams.get(&beam_id).unwrap().hit else { break 'fail };
+        let pos = write_block_pos(jni, pos);
+        let true = level.level_is_loaded(&pos) else { break 'fail };
+        let Some(hit_tile) = level.tile_at(&pos) else { break 'fail };
+        let gmv = lk.gmv.get().unwrap();
+        let dir = write_dir(jni, dir);
+        let cap = hit_tile.call_object_method(fmv.get_cap, &[gmv.energy_container_cap.raw, dir.raw]).unwrap().unwrap();
+        let cap = cap.call_object_method(fmv.lazy_opt_resolve, &[]).unwrap().unwrap();
+        let false = cap.opt_is_empty(&av.jv).unwrap() else { break 'fail };
+        let cap = cap.opt_get(&av.jv).unwrap();
+        let true = cap.call_bool_method(gmv.can_input_eu_from_side, &[dir.raw]).unwrap() else { break 'fail };
+        drain = drain.max(volts * cap.call_long_method(gmv.accept_eu, &[dir.raw, volts as _, 1]).unwrap())
+    }
+    if drain > 0 {
+        state.energy -= drain;
         if tile.beam_id.get().is_none() {
             if let Some(dir) = tile.compute_dir() {
-                tile.beam_id.set(Some(add_beam(&lk, &BorrowedRef::new(jni, &level), tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), dir)))
+                tile.beam_id.set(Some(add_beam(&lk, &level, tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), dir)))
             }
         }
     } else if let Some(beam_id) = tile.beam_id.replace(None) {
@@ -425,3 +444,5 @@ fn change_eu(jni: &JNI, this: usize, delta: i64) -> i64 {
     data.energy = (old + delta).clamp(0, emitter.eu_capacity(&lk.tiers.borrow()));
     data.energy - old
 }
+
+// TODO: implement get_input_eu_per_sec

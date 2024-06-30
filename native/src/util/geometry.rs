@@ -1,4 +1,4 @@
-use crate::{global::GlobalObjs, jvm::*, objs};
+use crate::{jvm::*, objs};
 use core::f32::consts::FRAC_1_SQRT_2;
 use nalgebra::{point, vector, Point2, Point3, Quaternion, Unit, UnitQuaternion, UnitVector3, Vector2, Vector3};
 use num_traits::Signed;
