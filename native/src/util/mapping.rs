@@ -28,6 +28,8 @@ pub struct ForgeCN<T> {
     pub chunk_watch_base: T,
     pub chunk_watch_evt: T,
     pub chunk_unwatch_evt: T,
+    pub chunk_load_evt: T,
+    pub chunk_unload_evt: T,
     // Client
     pub render_lvl_stg_evt: T,
     pub render_lvl_stg: T,
@@ -62,6 +64,8 @@ impl ForgeCN<Arc<CSig>> {
             chunk_watch_base: b"net.minecraftforge.event.level.ChunkWatchEvent",
             chunk_watch_evt: b"net.minecraftforge.event.level.ChunkWatchEvent$Watch",
             chunk_unwatch_evt: b"net.minecraftforge.event.level.ChunkWatchEvent$UnWatch",
+            chunk_load_evt: b"net.minecraftforge.event.level.ChunkEvent$Load",
+            chunk_unload_evt: b"net.minecraftforge.event.level.ChunkEvent$Unload",
             // Client
             render_lvl_stg_evt: b"net.minecraftforge.client.event.RenderLevelStageEvent",
             render_lvl_stg: b"net.minecraftforge.client.event.RenderLevelStageEvent$Stage",
@@ -182,6 +186,8 @@ pub struct ForgeMV {
     pub chunk_watch_player: usize,
     pub chunk_watch_pos: usize,
     pub chunk_watch_level: usize,
+    pub level_evt_level: usize,
+    pub chunk_evt_chunk: usize,
     pub client: Option<ForgeMVC>,
 }
 
@@ -223,6 +229,8 @@ impl ForgeMV {
         let network_ctx = load(&fcn.network_ctx);
         let network_dir = load(&fcn.network_dir);
         let chunk_watch_base = load(&fcn.chunk_watch_base);
+        let chunk_evt = av.ldr.load_class(&av.jv, c"net.minecraftforge.event.level.ChunkEvent").unwrap();
+        let level_evt = av.ldr.load_class(&av.jv, c"net.minecraftforge.event.level.LevelEvent").unwrap();
         let dist = fml.static_field_1(c"dist", c"Lnet/minecraftforge/api/distmarker/Dist;");
         let is_client = dist.call_bool_method(dist.get_object_class().get_method_id(c"isClient", c"()Z").unwrap(), &[]).unwrap();
         Self {
@@ -266,6 +274,8 @@ impl ForgeMV {
             chunk_watch_level: chunk_watch_base.get_field_id(c"level", &cn.server_level.sig).unwrap(),
             chunk_watch_player: chunk_watch_base.get_field_id(c"player", &cn.server_player.sig).unwrap(),
             chunk_watch_pos: chunk_watch_base.get_field_id(c"pos", &cn.chunk_pos.sig).unwrap(),
+            chunk_evt_chunk: chunk_evt.get_field_id(c"chunk", &cn.chunk_access.sig).unwrap(),
+            level_evt_level: level_evt.get_field_id(c"level", &cn.level_access.sig).unwrap(),
             client: is_client.then(|| {
                 let renderers_evt = load(&fcn.renderers_evt);
                 let renderers_evt_reg = msig([cn.tile_type.sig.to_bytes(), cn.tile_renderer_provider.sig.to_bytes()], b"V");
@@ -354,6 +364,9 @@ pub struct CN<T> {
     pub chunk_pos: T,
     pub conn: T,
     pub server_pkt_listener_impl: T,
+    pub chunk_access: T,
+    pub level_access: T,
+    pub level_chunk: T,
     // Client
     pub tile_renderer: T,
     pub tile_renderer_provider: T,
@@ -462,6 +475,9 @@ impl CN<Arc<CSig>> {
             chunk_pos: b"net.minecraft.world.level.ChunkPos",
             conn: b"net.minecraft.network.Connection",
             server_pkt_listener_impl: b"net.minecraft.server.network.ServerGamePacketListenerImpl",
+            chunk_access: b"net.minecraft.world.level.chunk.ChunkAccess",
+            level_access: b"net.minecraft.world.level.LevelAccessor",
+            level_chunk: b"net.minecraft.world.level.chunk.LevelChunk",
             // Client
             tile_renderer: b"net.minecraft.client.renderer.blockentity.BlockEntityRenderer",
             tile_renderer_provider: b"net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider",
@@ -595,6 +611,9 @@ pub struct MN<T> {
     pub block_hit_result_pos: T,
     pub block_hit_result_miss: T,
     pub block_hit_result_dir: T,
+    pub chunk_access_pos: T,
+    pub level_chunk_set_block_state: T,
+    pub level_chunk_level: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -911,6 +930,13 @@ impl MN<MSig> {
             block_hit_result_pos: MSig { owner: cn.block_hit_result.clone(), name: cs("f_82445_"), sig: cn.vec3d.sig.clone() },
             block_hit_result_miss: MSig { owner: cn.block_hit_result.clone(), name: cs("f_82412_"), sig: cs("Z") },
             block_hit_result_dir: MSig { owner: cn.block_hit_result.clone(), name: cs("f_82410_"), sig: cn.dir.sig.clone() },
+            chunk_access_pos: MSig { owner: cn.chunk_access.clone(), name: cs("f_187604_"), sig: cn.chunk_pos.sig.clone() },
+            level_chunk_set_block_state: MSig {
+                owner: cn.level_chunk.clone(),
+                name: cs("m_6978_"),
+                sig: msig([cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes(), b"Z"], cn.block_state.sig.to_bytes()),
+            },
+            level_chunk_level: MSig { owner: cn.level_chunk.clone(), name: cs("f_62776_"), sig: cn.level.sig.clone() },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -1158,6 +1184,8 @@ pub struct MV {
     pub block_hit_result_pos: usize,
     pub block_hit_result_miss: usize,
     pub block_hit_result_dir: usize,
+    pub chunk_access_pos: usize,
+    pub level_chunk: GlobalRef<'static>,
     pub client: Option<MVC>,
 }
 
@@ -1356,6 +1384,8 @@ impl MV {
             block_hit_result_pos: mn.block_hit_result_pos.get_field_id(&block_hit_result).unwrap(),
             block_hit_result_miss: mn.block_hit_result_miss.get_field_id(&block_hit_result).unwrap(),
             block_hit_result_dir: mn.block_hit_result_dir.get_field_id(&block_hit_result).unwrap(),
+            chunk_access_pos: mn.chunk_access_pos.get_field_id(&load(&cn.chunk_access)).unwrap(),
+            level_chunk: load(&cn.level_chunk),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);

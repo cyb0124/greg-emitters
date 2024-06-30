@@ -1,6 +1,6 @@
 use crate::{
     asm::*,
-    beams::{ClientState, ServerState},
+    beams::{ClientState, ServerState, TrackedBlock},
     emitter_blocks::EmitterBlocks,
     emitter_items::EmitterItems,
     jvm::*,
@@ -11,10 +11,11 @@ use crate::{
     util::{
         cleaner::Cleaner,
         client::{ClientDefs, Sprite},
+        geometry::GeomExt,
         gui::GUIDefs,
         mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
         network::NetworkDefs,
-        tile::TileDefs,
+        tile::{TileDefs, TileExt},
         ClassBuilder, ClassNamer,
     },
 };
@@ -46,6 +47,7 @@ pub struct GlobalObjs {
     pub greg_reg_item_stub: MSig,
     pub greg_creative_tab_stub: MSig,
     pub greg_reinit_models_stub: MSig,
+    pub level_chunk_set_block_state_stub: MSig,
     pub mc_clear_level_stub: MSig,
     pub mtx: JMutex<'static, GlobalMtx>,
     pub net_defs: NetworkDefs,
@@ -106,6 +108,8 @@ impl GlobalObjs {
         cb.stub(&greg_reinit_models_stub, greg_reinit_models_stub_dyn());
         let mc_clear_level_stub = cb.stub_name(cs("1"), cs("()V"));
         cb.stub(&mc_clear_level_stub, mc_clear_level_stub_dyn());
+        let level_chunk_set_block_state_stub = cb.stub_name(cs("0"), msig([cn.level.sig.to_bytes(), cn.block_pos.sig.to_bytes()], b"V"));
+        cb.stub(&level_chunk_set_block_state_stub, level_chunk_set_block_state_stub_dyn());
         cb.define_empty();
 
         // Logger
@@ -135,6 +139,7 @@ impl GlobalObjs {
             greg_creative_tab_stub,
             greg_reinit_models_stub,
             mc_clear_level_stub,
+            level_chunk_set_block_state_stub,
             logger: logger.new_global_ref().unwrap(),
             logger_warn: logger.get_object_class().get_method_id(c"warn", c"(Ljava/lang/String;)V").unwrap(),
         }
@@ -204,3 +209,22 @@ fn greg_reinit_models_stub(jni: &JNI, _: usize) {
 
 #[dyn_abi]
 fn mc_clear_level_stub(jni: &JNI, _: usize) { objs().mtx.lock(jni).unwrap().client_state.borrow_mut().beams.clear() }
+
+#[dyn_abi]
+fn level_chunk_set_block_state_stub(jni: &JNI, _: usize, level: usize, pos: usize) {
+    let level = BorrowedRef::new(jni, &level);
+    let false = level.level_is_client() else { return };
+    let mtx = objs().mtx.lock(jni).unwrap();
+    let mut srv = mtx.server_state.borrow_mut();
+    let srv = &mut *srv;
+    let Some(dim) = srv.dims.find(ti().id_hash(level.raw).unwrap() as _, |x| level.is_same_object(x.level.0.raw)) else { return };
+    let Some(block) = dim.blocks.get(&BorrowedRef::new(jni, &pos).read_vec3i()) else { return };
+    match block {
+        TrackedBlock::ByOne(id) => srv.beams.get_mut(id).unwrap().dirty = true,
+        TrackedBlock::ByMany(beams) => {
+            for id in beams {
+                srv.beams.get_mut(id).unwrap().dirty = true
+            }
+        }
+    }
+}

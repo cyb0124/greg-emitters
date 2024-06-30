@@ -7,6 +7,7 @@ use alloc::boxed::Box;
 use alloc::{format, vec::Vec};
 use core::ffi::{c_char, CStr};
 use macros::dyn_abi;
+use nalgebra::Point2;
 
 pub const MOD_ID: &str = "greg_emitters";
 pub const PROTOCOL_VERSION: &CStr = c"0";
@@ -19,10 +20,13 @@ pub fn init() {
     ti().set_event_notification_mode(true, JVMTI_EVENT_CLASS_FILE_LOAD_HOOK, 0).unwrap();
     // GTRegistrate may already be loaded at this point. If so, retransform it.
     let gt_reg = av.ldr.load_class(&av.jv, &gcn.reg.dot).ok();
-    ti().retransform_classes(&Box::from_iter([gt_reg.fmap(|x| x.raw), mv.client.fmap(|x| x.mc.raw)].into_iter().flatten())).unwrap();
+    let list = [gt_reg.fmap(|x| x.raw), mv.client.fmap(|x| x.mc.raw)].into_iter().flatten().chain([mv.level_chunk.raw]);
+    ti().retransform_classes(&Box::from_iter(list)).unwrap();
     add_forge_listener(&fmv.mod_evt_bus, fcn.reg_evt.sig.to_bytes(), on_forge_reg_dyn());
     add_forge_listener(&fmv.com_evt_bus, fcn.chunk_watch_evt.sig.to_bytes(), on_chunk_watch_dyn());
     add_forge_listener(&fmv.com_evt_bus, fcn.chunk_unwatch_evt.sig.to_bytes(), on_chunk_unwatch_dyn());
+    add_forge_listener(&fmv.com_evt_bus, fcn.chunk_load_evt.sig.to_bytes(), on_chunk_load_or_unload_dyn());
+    add_forge_listener(&fmv.com_evt_bus, fcn.chunk_unload_evt.sig.to_bytes(), on_chunk_load_or_unload_dyn());
     if fmv.client.is_some() {
         add_forge_listener(&fmv.mod_evt_bus, fcn.atlas_evt.sig.to_bytes(), on_forge_atlas_dyn());
         add_forge_listener(&fmv.mod_evt_bus, fcn.renderers_evt.sig.to_bytes(), on_forge_renderers_dyn());
@@ -77,23 +81,35 @@ fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
     }
 }
 
+fn read_chunk_watch_base<'a>(evt: &impl JRef<'a>) -> (LocalRef<'a>, Point2<i32>) {
+    let fmv = &objs().fmv;
+    let pos = evt.get_object_field(fmv.chunk_watch_pos).unwrap().read_chunk_pos();
+    let player = evt.get_object_field(fmv.chunk_watch_player).unwrap();
+    (player, pos)
+}
+
 #[dyn_abi]
 fn on_chunk_watch(jni: &'static JNI, _: usize, evt: usize) {
-    let fmv = &objs().fmv;
     let evt = BorrowedRef::new(jni, &evt);
-    let pos = evt.get_object_field(fmv.chunk_watch_pos).unwrap().read_chunk_pos();
-    let level = evt.get_object_field(fmv.chunk_watch_level).unwrap();
-    let player = evt.get_object_field(fmv.chunk_watch_player).unwrap();
+    let (player, pos) = read_chunk_watch_base(&evt);
+    let level = evt.get_object_field(objs().fmv.chunk_watch_level).unwrap();
     crate::beams::on_chunk_watch(&player, &level, pos)
 }
 
 #[dyn_abi]
 fn on_chunk_unwatch(jni: &JNI, _: usize, evt: usize) {
-    let fmv = &objs().fmv;
-    let evt = BorrowedRef::new(jni, &evt);
-    let pos = evt.get_object_field(fmv.chunk_watch_pos).unwrap().read_chunk_pos();
-    let player = evt.get_object_field(fmv.chunk_watch_player).unwrap();
+    let (player, pos) = read_chunk_watch_base(&BorrowedRef::new(jni, &evt));
     crate::beams::on_chunk_unwatch(&player, pos)
+}
+
+#[dyn_abi]
+fn on_chunk_load_or_unload(jni: &'static JNI, _: usize, evt: usize) {
+    let GlobalObjs { mv, fmv, .. } = objs();
+    let evt = BorrowedRef::new(jni, &evt);
+    let chunk = evt.get_object_field(fmv.chunk_evt_chunk).unwrap();
+    let pos = chunk.get_object_field(mv.chunk_access_pos).unwrap().read_chunk_pos();
+    let level = evt.get_object_field(fmv.level_evt_level).unwrap();
+    crate::beams::on_chunk_load_or_unload(&level, pos)
 }
 
 #[dyn_abi]
@@ -249,7 +265,7 @@ fn patch_greg_material_block_renderer<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef
     cls
 }
 
-fn patch_mc_clear_level<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
+fn patch_mc_level<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
     let GlobalObjs { av, mn, mc_clear_level_stub, .. } = objs();
     let cls = av.read_class(jni, data).unwrap();
     let mut found = false;
@@ -259,6 +275,29 @@ fn patch_mc_clear_level<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
             let insns = method.method_insns(av).unwrap();
             let stub = || [mc_clear_level_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap()];
             insns.for_each_return_insn(av, |x| insns.insert_insns_before(av, x.raw, stub())).unwrap();
+            found = true;
+            break;
+        }
+    }
+    assert!(found);
+    cls
+}
+
+fn patch_level_chunk<'a>(jni: &'a JNI, data: &[u8]) -> LocalRef<'a> {
+    let GlobalObjs { av, mn, level_chunk_set_block_state_stub, .. } = objs();
+    let cls = av.read_class(jni, data).unwrap();
+    let mut found = false;
+    for method in cls.class_methods_iter(av).unwrap() {
+        let method = method.unwrap().expect_some().unwrap();
+        if mn.level_chunk_set_block_state.matches_node(av, &method).unwrap() {
+            let insns = method.method_insns(av).unwrap();
+            let stub = [
+                av.new_var_insn(jni, OP_ALOAD, 0).unwrap(),
+                mn.level_chunk_level.new_field_insn(av, jni, OP_GETFIELD).unwrap(),
+                av.new_var_insn(jni, OP_ALOAD, 1).unwrap(),
+                level_chunk_set_block_state_stub.new_method_insn(av, jni, OP_INVOKESTATIC).unwrap(),
+            ];
+            insns.prepend_insns(av, stub).unwrap();
             found = true;
             break;
         }
@@ -291,7 +330,9 @@ fn class_file_load_hook(
     } else if slash == &*gcn.material_block_renderer.slash {
         patch_greg_material_block_renderer(jni, data)
     } else if slash == &*cn.mc.slash {
-        patch_mc_clear_level(jni, data)
+        patch_mc_level(jni, data)
+    } else if slash == &*cn.level_chunk.slash {
+        patch_level_chunk(jni, data)
     } else {
         return;
     };

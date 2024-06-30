@@ -7,6 +7,7 @@ use crate::{
     mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
+    ti,
     util::{
         cleaner::Cleanable,
         client::SolidRenderer,
@@ -280,7 +281,14 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
     let mut active = false;
     if let Some(beam_id) = tile.beam_id.get() {
         let mut srv = lk.server_state.borrow_mut();
+        let srv = &mut *srv;
         let beam = srv.beams.get_mut(&beam_id).unwrap();
+        let mut should_broadcast = false;
+        if beam.dirty {
+            let dim = srv.dims.find_mut(ti().id_hash(level.raw).unwrap() as _, |x| level.is_same_object(x.level.0.raw)).unwrap();
+            beam.recompute(jni, &mut srv.players, dim, beam_id);
+            should_broadcast = true
+        }
         'fail: {
             let true = state.energy >= volts else { break 'fail };
             let Some((pos, dir)) = beam.hit else { break 'fail };
@@ -298,6 +306,9 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
         }
         if beam.active != active {
             beam.active = active;
+            should_broadcast = true
+        }
+        if should_broadcast {
             beam.broadcast_set_beam(jni, beam_id)
         }
     }
