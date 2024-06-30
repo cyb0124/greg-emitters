@@ -6,9 +6,13 @@ plugins {
     id 'org.parchmentmc.librarian.forgegradle' version '1.+'
 }
 repositories {
-    maven { name = 'tterrag maven'; url = 'https://maven.tterrag.com/' }
-    maven { name = "Jared's maven"; url = "https://maven.blamejared.com/" }
-    maven { url = "https://cursemaven.com" }
+    maven { url = "https://maven.firstdarkdev.xyz/snapshots" }
+    maven { url = "https://maven.terraformersmc.com/releases/" }
+    maven { url = "https://maven.saps.dev/minecraft"; content { includeGroup "dev.latvian.mods" } }
+    maven { url = "https://jitpack.io" }
+    maven { url = "https://modmaven.dev" }
+    maven { url = "https://maven.architectury.dev" }
+    maven { url = "https://maven.tterrag.com" }
 }
 version = mod_version
 group = mod_group_id
@@ -34,7 +38,10 @@ minecraft {
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
-    implementation fg.deobf("mezz.jei:jei-${minecraft_version}-forge:${jei_version}")
+    implementation fg.deobf("dev.toma.configuration:configuration-forge-1.20.1:2.2.0")
+    implementation fg.deobf("com.tterrag.registrate:Registrate:MC1.20-1.3.3")
+    implementation fg.deobf("com.lowdragmc.ldlib:ldlib-forge-1.20.1:1.0.25.r")
+    implementation fg.deobf("com.gregtechceu.gtceu:gtceu-1.20.1:1.3.0-a:slim")
 }
 tasks.named('processResources', ProcessResources).configure {
     var replaceProperties = [

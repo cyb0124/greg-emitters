@@ -1,6 +1,6 @@
 use super::{
     cleaner::Cleanable,
-    client::DrawContext,
+    client::SolidRenderer,
     mapping::{ForgeMN, CN, MN},
     nbt::{new_compound, NBTExt, KEY_COMMON, KEY_SERVER},
     ClassBuilder, ClassNamer, FatWrapper,
@@ -51,7 +51,7 @@ pub trait Tile: Cleanable {
     fn load_server<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()>;
     fn get_cap(&self, cap: BorrowedRef) -> Option<usize>;
     fn invalidate_caps(&self, jni: &JNI, lk: &GlobalMtx);
-    fn render(&self, lk: &GlobalMtx, dc: DrawContext, tf: Affine3<f32>);
+    fn render(&self, lk: &GlobalMtx, sr: SolidRenderer, tf: Affine3<f32>);
 }
 
 pub struct TileDefs {

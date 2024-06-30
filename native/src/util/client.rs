@@ -30,8 +30,7 @@ pub trait ClientExt<'a>: JRef<'a> {
 
     fn gui_draw_mesh(&self, mesh: &mut Mesh) {
         let mvc = objs().mv.client.uref();
-        let pose = self.get_object_field(mvc.gui_graphics_pose).unwrap();
-        let pose = pose.call_object_method(mvc.pose_stack_last, &[]).unwrap().unwrap().get_object_field(mvc.pose_pose).unwrap();
+        let pose = self.get_object_field(mvc.gui_graphics_pose).unwrap().last_pose();
         let render_sys = mvc.render_sys.with_jni(self.jni());
         render_sys.call_static_void_method(mvc.render_sys_set_shader, &[objs().client_defs.uref().pos_color_shader_supplier.raw]).unwrap();
         render_sys.call_static_void_method(mvc.render_sys_enable_blend, &[]).unwrap();
@@ -53,11 +52,15 @@ pub trait ClientExt<'a>: JRef<'a> {
     }
 
     // Called on PoseStack
-    fn last_pose(&self) -> Affine3<f32> {
+    fn last_pose(&self) -> LocalRef<'a> {
         let mvc = objs().mv.client.uref();
-        let pose = self.call_object_method(mvc.pose_stack_last, &[]).unwrap().unwrap().get_object_field(mvc.pose_pose).unwrap();
+        self.call_object_method(mvc.pose_stack_last, &[]).unwrap().unwrap().get_object_field(mvc.pose_pose).unwrap()
+    }
+
+    // Called on Matrix4f
+    fn read_pose(&self) -> Affine3<f32> {
         let mut pose_data = MaybeUninit::<ArrayStorage<f32, 4, 4>>::uninit();
-        pose.call_object_method(mvc.matrix4fc_read, &[pose_data.as_mut_ptr() as _]).unwrap();
+        self.call_object_method(objs().mv.client.uref().matrix4fc_read, &[pose_data.as_mut_ptr() as _]).unwrap();
         Affine3::from_matrix_unchecked(Matrix4::from_data(unsafe { pose_data.assume_init() }))
     }
 }
@@ -210,9 +213,9 @@ fn screen_constructor_create(jni: &JNI, _: usize, menu: usize, inv: usize, title
 #[dyn_abi]
 fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buffer_source: usize, light: i32, overlay: i32) {
     let lk = objs().mtx.lock(jni).unwrap();
-    let dc = DrawContext::new(&lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
-    let pose = BorrowedRef::new(jni, &pose_stack).last_pose();
-    objs().tile_defs.tile.read(&lk, BorrowedRef::new(jni, &tile)).render(&lk, dc, pose)
+    let sr = SolidRenderer::new(&lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
+    let pose = BorrowedRef::new(jni, &pose_stack).last_pose().read_pose();
+    objs().tile_defs.tile.read(&lk, BorrowedRef::new(jni, &tile)).render(&lk, sr, pose)
 }
 
 #[derive(Clone, Copy)]
@@ -239,16 +242,16 @@ impl Sprite {
     }
 }
 
-pub struct DrawContext<'a> {
+pub struct SolidRenderer<'a> {
     buffer: LocalRef<'a>,
     light: i32,
     overlay: i32,
 }
 
-impl<'a> DrawContext<'a> {
+impl<'a> SolidRenderer<'a> {
     pub fn new(lk: &GlobalMtx, buffer_source: &impl JRef<'a>, light: i32, overlay: i32) -> Self {
         let sheets = lk.sheets_solid.get().unwrap().raw;
-        let buffer = buffer_source.call_object_method(objs().mv.client.uref().buffer_source_get_buffer, &[sheets]).unwrap().unwrap();
+        let buffer = buffer_source.call_object_method(objs().mv.client.uref().multi_buffer_source_get_buffer, &[sheets]).unwrap().unwrap();
         Self { buffer, light, overlay }
     }
 

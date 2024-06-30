@@ -9,7 +9,7 @@ use crate::{
     registry::{forge_reg, EMITTER_ID},
     util::{
         cleaner::Cleanable,
-        client::DrawContext,
+        client::SolidRenderer,
         geometry::{lerp, new_voxel_shape, GeomExt, DIR_ATTS},
         tile::{Tile, TileExt, TileSupplier},
         ClassBuilder, ThinWrapper,
@@ -80,8 +80,6 @@ struct EnergyContainer {
 impl Cleanable for EnergyContainer {
     fn free(self: Arc<Self>, jni: &JNI) { Arc::into_inner(self).unwrap().tile.into_inner().unwrap().replace_jni(jni); }
 }
-
-struct EmitterSupplier;
 
 struct Block {
     tier: u8,
@@ -180,7 +178,7 @@ impl Tile for Emitter {
         }
     }
 
-    fn render(&self, lk: &GlobalMtx, mut dc: DrawContext, mut tf: Affine3<f32>) {
+    fn render(&self, lk: &GlobalMtx, mut sr: SolidRenderer, mut tf: Affine3<f32>) {
         let common = self.common.borrow();
         let Some(dir) = common.dir else { return };
         tf *= Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
@@ -194,10 +192,10 @@ impl Tile for Emitter {
         let leg_bot = greg_wire.sub(0., 0., LEG_DIA, LEG_DIA);
         for x in [-LEG_POS, LEG_POS] {
             let tf = tf * Translation3::new(x, 0., 0.);
-            dc.square(&leg_bot, &(tf * Translation3::new(0., -0.5, 0.) * DIR_ATTS[0] * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_DIA, 1.))));
+            sr.square(&leg_bot, &(tf * Translation3::new(0., -0.5, 0.) * DIR_ATTS[0] * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_DIA, 1.))));
             let mut face = Translation3::new(0., LEG_LEN * 0.5 - 0.5, LEG_DIA * 0.5) * Affine3::from_subset(&Scale3::new(LEG_DIA, LEG_LEN, 1.));
             for _ in 0..4 {
-                dc.square(&leg_side, &(tf * face));
+                sr.square(&leg_side, &(tf * face));
                 face = DIR_ATTS[4] * face;
             }
         }
@@ -227,32 +225,33 @@ impl Tile for Emitter {
             for i in 0..CONTOUR.len() - 1 {
                 let v0 = spr.lerp_v(CONTOUR[i].2);
                 let v1 = spr.lerp_v(CONTOUR[i + 1].2);
-                dc.vertex(q0[i], m0[i], spr.uv0.x, v0);
-                dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
-                dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
-                dc.vertex(q0[i + 1], m0[i], spr.uv0.x, v1);
-                dc.vertex(q1[i], m1[i], spr.uv1.x, v0);
-                dc.vertex(q2[i], m2[i], spr.uv0.x, v0);
-                dc.vertex(q2[i + 1], m2[i], spr.uv0.x, v1);
-                dc.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
+                sr.vertex(q0[i], m0[i], spr.uv0.x, v0);
+                sr.vertex(q1[i], m1[i], spr.uv1.x, v0);
+                sr.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
+                sr.vertex(q0[i + 1], m0[i], spr.uv0.x, v1);
+                sr.vertex(q1[i], m1[i], spr.uv1.x, v0);
+                sr.vertex(q2[i], m2[i], spr.uv0.x, v0);
+                sr.vertex(q2[i + 1], m2[i], spr.uv0.x, v1);
+                sr.vertex(q1[i + 1], m1[i], spr.uv1.x, v1);
             }
             // Bottom Cap
             let v = spr.lerp_v(CONTOUR[0].2);
-            dc.vertex(bot_q, bot_m, spr.uv1.x, spr.uv1.y);
-            dc.vertex(q2[0], bot_m, spr.uv0.x, v);
-            dc.vertex(q1[0], bot_m, spr.uv1.x, v);
-            dc.vertex(q0[0], bot_m, spr.uv0.x, v);
+            sr.vertex(bot_q, bot_m, spr.uv1.x, spr.uv1.y);
+            sr.vertex(q2[0], bot_m, spr.uv0.x, v);
+            sr.vertex(q1[0], bot_m, spr.uv1.x, v);
+            sr.vertex(q0[0], bot_m, spr.uv0.x, v);
             // Top Cap
             let v = spr.lerp_v(CONTOUR.last().unwrap().2);
-            dc.vertex(top_q, *m1.last().unwrap(), spr.uv1.x, spr.uv1.y);
-            dc.vertex(*q0.last().unwrap(), *m0.last().unwrap(), spr.uv0.x, v);
-            dc.vertex(*q1.last().unwrap(), *m1.last().unwrap(), spr.uv1.x, v);
-            dc.vertex(*q2.last().unwrap(), *m2.last().unwrap(), spr.uv1.x, v);
+            sr.vertex(top_q, *m1.last().unwrap(), spr.uv1.x, spr.uv1.y);
+            sr.vertex(*q0.last().unwrap(), *m0.last().unwrap(), spr.uv0.x, v);
+            sr.vertex(*q1.last().unwrap(), *m1.last().unwrap(), spr.uv1.x, v);
+            sr.vertex(*q2.last().unwrap(), *m2.last().unwrap(), spr.uv1.x, v);
             (p0 = p2, q0 = q2, n0 = n2, m0 = m2);
         }
     }
 }
 
+struct EmitterSupplier;
 impl TileSupplier for EmitterSupplier {
     fn new_tile(&self, lk: &GlobalMtx, pos: BorrowedRef<'static, '_>, state: BorrowedRef<'static, '_>) -> Option<LocalRef<'static>> {
         let defs = lk.emitter_blocks.get().unwrap();

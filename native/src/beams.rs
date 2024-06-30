@@ -1,6 +1,7 @@
 use crate::{
     global::GlobalMtx,
     jvm::*,
+    mapping_base::MBOptExt,
     objs,
     packets::S2C,
     ti,
@@ -10,11 +11,8 @@ use crate::{
     },
 };
 use core::{mem::take, num::NonZeroUsize};
-use hashbrown::{
-    hash_map::{self, Entry},
-    hash_table, HashMap, HashSet, HashTable,
-};
-use nalgebra::{vector, Point2, Point3, UnitVector3};
+use hashbrown::{hash_map, hash_table, HashMap, HashSet, HashTable};
+use nalgebra::{Point2, Point3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -101,7 +99,7 @@ impl PlayerState {
 
     #[must_use]
     fn decr_beam(&mut self, id: NonZeroUsize) -> bool {
-        let Entry::Occupied(mut entry) = self.beams.entry(id) else { unreachable!() };
+        let hash_map::Entry::Occupied(mut entry) = self.beams.entry(id) else { unreachable!() };
         let count = entry.get_mut();
         *count -= 1;
         let del = *count == 0;
@@ -129,7 +127,7 @@ impl BeamState {
     fn recompute(&mut self, jni: &'static JNI, players: &mut HashTable<PlayerState>, dim: &mut DimState, id: NonZeroUsize) {
         let old_chunks = take(&mut self.chunks);
         self.chunks.insert(block_to_chunk(self.src));
-        let mut covering = CoveringBlocks::new(self.src, vector![0.5, 0.5, 0.5], self.dir);
+        let mut covering = CoveringBlocks::new(self.src, Vector3::from_element(0.5), self.dir);
         loop {
             covering.step();
             let pos = write_block_pos(jni, covering.pos);
@@ -149,7 +147,7 @@ impl BeamState {
             }
         }
         for &pos in old_chunks.difference(&self.chunks) {
-            let Entry::Occupied(mut c_entry) = dim.chunks.entry(pos) else { unreachable!() };
+            let hash_map::Entry::Occupied(mut c_entry) = dim.chunks.entry(pos) else { unreachable!() };
             let c_state = c_entry.get_mut();
             for &(ref player, p_hash) in &c_state.players {
                 let player = player.with_jni(jni);
@@ -174,7 +172,8 @@ pub fn on_chunk_watch(player: &impl JRef<'static>, level: &impl JRef<'static>, p
     let p_hash = ti().id_hash(player.raw()).unwrap();
     let dim = find_or_add_dim(&mut srv.dims, level);
     let chunk = dim.chunks.entry(pos).or_default();
-    chunk.players.insert_unique(p_hash as _, (player.new_global_ref().unwrap(), p_hash), |x| x.1 as _);
+    let hash_table::Entry::Vacant(p_entry) = chunk.players.entry(p_hash as _, |x| player.is_same_object(x.0.raw), |x| x.1 as _) else { return };
+    p_entry.insert((player.new_global_ref().unwrap(), p_hash));
     let l_hash = dim.level.1;
     let p_entry = (srv.players.entry(p_hash as _, |x| player.is_same_object(x.player.0.raw), |x| x.player.1 as _)).or_insert_with(|| PlayerState {
         player: (player.new_global_ref().unwrap(), p_hash),
@@ -203,7 +202,7 @@ pub fn on_chunk_unwatch<'a>(player: &impl JRef<'a>, pos: Point2<i32>) {
     let level = p_state.level.0.with_jni(player.jni()).new_local_ref().unwrap();
     let l_hash = p_state.level.1;
     let mut d_entry = srv.dims.find_entry(l_hash as _, |x| level.is_same_object(x.level.0.raw)).ok().unwrap();
-    let Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { unreachable!() };
+    let hash_map::Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { return };
     let c_state = c_entry.get_mut();
     for &id in &c_state.beams {
         if p_state.decr_beam(id) {
@@ -234,7 +233,7 @@ pub fn del_beam(jni: &JNI, lk: &GlobalMtx, id: NonZeroUsize) {
     let level = beam.level.0.replace_jni(jni);
     let Ok(mut d_entry) = srv.dims.find_entry(beam.level.1 as _, |x| level.is_same_object(x.level.0.raw)) else { unreachable!() };
     for pos in beam.chunks {
-        let Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { unreachable!() };
+        let hash_map::Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { unreachable!() };
         c_entry.get_mut().beams.remove(&id);
         del_chunk_if_empty(c_entry)
     }
@@ -247,7 +246,7 @@ pub fn add_beam(lk: &GlobalMtx, level: &impl JRef<'static>, tier: u8, src: Point
     let dim = find_or_add_dim(&mut srv.dims, level);
     let id = srv.next_beam_id;
     srv.next_beam_id = srv.next_beam_id.checked_add(1).unwrap();
-    let Entry::Vacant(entry) = srv.beams.entry(id) else { unreachable!() };
+    let hash_map::Entry::Vacant(entry) = srv.beams.entry(id) else { unreachable!() };
     let beam = entry.insert(BeamState {
         level: (level.new_global_ref().unwrap(), dim.level.1),
         players: HashTable::new(),
@@ -270,4 +269,26 @@ pub fn set_beam_dir(lk: &GlobalMtx, jni: &'static JNI, id: NonZeroUsize, dir: Un
     let dim = srv.dims.find_mut(beam.level.1 as _, |x| level.is_same_object(x.level.0.raw)).unwrap();
     beam.dir = dir;
     beam.recompute(jni, &mut srv.players, dim, id)
+}
+
+impl ClientBeam {
+    pub fn render<'a>(&self, vb: &impl JRef<'a>, pose: &impl JRef<'a>, camera_pos: Point3<f32>) {
+        // TODO: frustum culling
+        let mvc = objs().mv.client.uref();
+        let src = self.src.cast::<f32>().map(|x| x + 0.5) - camera_pos;
+        let dst = self.dst - camera_pos;
+        let dir = (dst - src).normalize();
+        let mut b = Vector3::zeros();
+        b[dir.abs().argmin().0] = 1.;
+        let n = b.cross(&dir) * 0.1;
+        let b = n.cross(&dir);
+        let pts = [src + n, dst + n, src + b, dst + b, src - n, dst - n, src - b, dst - b];
+        for i in [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0] {
+            let p = pts[i];
+            vb.call_object_method(mvc.vertex_consumer_pos, &[pose.raw(), f_raw(p.x), f_raw(p.y), f_raw(p.z)]).unwrap();
+            // TODO: tier color
+            vb.call_object_method(mvc.vertex_consumer_color, &[f_raw(0.5), f_raw(0.), f_raw(0.), f_raw(1.)]).unwrap();
+            vb.call_void_method(mvc.vertex_consumer_end_vertex, &[]).unwrap()
+        }
+    }
 }

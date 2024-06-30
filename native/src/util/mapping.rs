@@ -187,10 +187,11 @@ pub struct ForgeMV {
 pub struct ForgeMVC {
     pub renderers_evt_reg: usize,
     pub atlas_evt_get_atlas: usize,
-    pub render_lvl_stg_after_particles: GlobalRef<'static>,
+    pub render_lvl_stg_after_tiles: GlobalRef<'static>,
     pub render_lvl_stg_evt_stage: usize,
     pub render_lvl_stg_evt_renderer: usize,
     pub render_lvl_stg_evt_pose: usize,
+    pub render_lvl_stg_evt_camera: usize,
 }
 
 impl ForgeMV {
@@ -268,10 +269,11 @@ impl ForgeMV {
                 ForgeMVC {
                     renderers_evt_reg: renderers_evt.get_method_id(c"registerBlockEntityRenderer", &renderers_evt_reg).unwrap(),
                     atlas_evt_get_atlas: atlas_evt.get_method_id(c"getAtlas", &msig([], cn.atlas.sig.to_bytes())).unwrap(),
-                    render_lvl_stg_after_particles: load(&fcn.render_lvl_stg).static_field_1(c"AFTER_PARTICLES", &fcn.render_lvl_stg.sig),
+                    render_lvl_stg_after_tiles: load(&fcn.render_lvl_stg).static_field_1(c"AFTER_BLOCK_ENTITIES", &fcn.render_lvl_stg.sig),
                     render_lvl_stg_evt_stage: load(&fcn.render_lvl_stg_evt).get_field_id(c"stage", &fcn.render_lvl_stg.sig).unwrap(),
                     render_lvl_stg_evt_renderer: load(&fcn.render_lvl_stg_evt).get_field_id(c"levelRenderer", &cn.level_renderer.sig).unwrap(),
                     render_lvl_stg_evt_pose: load(&fcn.render_lvl_stg_evt).get_field_id(c"poseStack", &cn.pose_stack.sig).unwrap(),
+                    render_lvl_stg_evt_camera: load(&fcn.render_lvl_stg_evt).get_field_id(c"camera", &cn.camera.sig).unwrap(),
                 }
             }),
         }
@@ -298,6 +300,7 @@ pub struct CN<T> {
     pub tile_supplier: T,
     pub tile_type: T,
     pub vec3i: T,
+    pub vec3d: T,
     pub block_pos: T,
     pub block_state: T,
     pub dfu_type: T,
@@ -356,6 +359,7 @@ pub struct CN<T> {
     pub sprite: T,
     pub sheets: T,
     pub multi_buffer_source: T,
+    pub buffer_source: T,
     pub vertex_consumer: T,
     pub render_type: T,
     pub menu_screens: T,
@@ -378,6 +382,8 @@ pub struct CN<T> {
     pub sound_inst: T,
     pub simple_sound_inst: T,
     pub level_renderer: T,
+    pub render_buffers: T,
+    pub camera: T,
 }
 
 impl CN<Arc<CSig>> {
@@ -401,6 +407,7 @@ impl CN<Arc<CSig>> {
             tile_supplier: b"net.minecraft.world.level.block.entity.BlockEntityType$BlockEntitySupplier",
             tile_type: b"net.minecraft.world.level.block.entity.BlockEntityType",
             vec3i: b"net.minecraft.core.Vec3i",
+            vec3d: b"net.minecraft.world.phys.Vec3",
             block_pos: b"net.minecraft.core.BlockPos",
             block_state: b"net.minecraft.world.level.block.state.BlockState",
             dfu_type: b"com.mojang.datafixers.types.Type",
@@ -459,6 +466,7 @@ impl CN<Arc<CSig>> {
             sprite: b"net.minecraft.client.renderer.texture.TextureAtlasSprite",
             sheets: b"net.minecraft.client.renderer.Sheets",
             multi_buffer_source: b"net.minecraft.client.renderer.MultiBufferSource",
+            buffer_source: b"net.minecraft.client.renderer.MultiBufferSource$BufferSource",
             vertex_consumer: b"com.mojang.blaze3d.vertex.VertexConsumer",
             render_type: b"net.minecraft.client.renderer.RenderType",
             menu_screens: b"net.minecraft.client.gui.screens.MenuScreens",
@@ -481,6 +489,8 @@ impl CN<Arc<CSig>> {
             sound_inst: b"net.minecraft.client.resources.sounds.SoundInstance",
             simple_sound_inst: b"net.minecraft.client.resources.sounds.SimpleSoundInstance",
             level_renderer: b"net.minecraft.client.renderer.LevelRenderer",
+            render_buffers: b"net.minecraft.client.renderer.RenderBuffers",
+            camera: b"net.minecraft.client.Camera",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -508,6 +518,9 @@ pub struct MN<T> {
     pub vec3i_x: T,
     pub vec3i_y: T,
     pub vec3i_z: T,
+    pub vec3d_x: T,
+    pub vec3d_y: T,
+    pub vec3d_z: T,
     pub block_pos_init: T,
     pub block_state_get_block: T,
     pub blocks_fire: T,
@@ -579,7 +592,8 @@ pub struct MN<T> {
     pub sprite_u1: T,
     pub sprite_v1: T,
     pub sheets_solid: T,
-    pub buffer_source_get_buffer: T,
+    pub multi_buffer_source_get_buffer: T,
+    pub buffer_source_end_batch: T,
     pub vertex_consumer_vertex: T,
     pub vertex_consumer_pos: T,
     pub vertex_consumer_color: T,
@@ -628,6 +642,9 @@ pub struct MN<T> {
     pub sound_mgr_play: T,
     pub simple_sound_inst_for_ui_holder: T,
     pub render_type_lightning: T,
+    pub level_renderer_buffers: T,
+    pub render_buffers_buffer_source: T,
+    pub camera_pos: T,
 }
 
 impl MN<MSig> {
@@ -729,6 +746,9 @@ impl MN<MSig> {
             vec3i_x: MSig { owner: cn.vec3i.clone(), name: cs("f_123285_"), sig: cs("I") },
             vec3i_y: MSig { owner: cn.vec3i.clone(), name: cs("f_123286_"), sig: cs("I") },
             vec3i_z: MSig { owner: cn.vec3i.clone(), name: cs("f_123289_"), sig: cs("I") },
+            vec3d_x: MSig { owner: cn.vec3i.clone(), name: cs("f_82479_"), sig: cs("D") },
+            vec3d_y: MSig { owner: cn.vec3i.clone(), name: cs("f_82480_"), sig: cs("D") },
+            vec3d_z: MSig { owner: cn.vec3i.clone(), name: cs("f_82481_"), sig: cs("D") },
             block_pos_init: MSig { owner: cn.block_pos.clone(), name: cs("<init>"), sig: cs("(III)V") },
             block_state_get_block: MSig { owner: cn.block_state.clone(), name: cs("m_60734_"), sig: msig([], cn.block.sig.to_bytes()) },
             blocks_fire: MSig { owner: cn.blocks.clone(), name: cs("f_50083_"), sig: cn.block.sig.clone() },
@@ -880,10 +900,15 @@ impl MN<MSig> {
             sprite_u1: MSig { owner: cn.sprite.clone(), name: cs("f_118352_"), sig: cs("F") },
             sprite_v1: MSig { owner: cn.sprite.clone(), name: cs("f_118354_"), sig: cs("F") },
             sheets_solid: MSig { owner: cn.sheets.clone(), name: cs("m_110789_"), sig: msig([], cn.render_type.sig.to_bytes()) },
-            buffer_source_get_buffer: MSig {
+            multi_buffer_source_get_buffer: MSig {
                 owner: cn.multi_buffer_source.clone(),
                 name: cs("m_6299_"),
                 sig: msig([cn.render_type.sig.to_bytes()], cn.vertex_consumer.sig.to_bytes()),
+            },
+            buffer_source_end_batch: MSig {
+                owner: cn.buffer_source.clone(),
+                name: cs("m_109912_"),
+                sig: msig([cn.render_type.sig.to_bytes()], b"V"),
             },
             vertex_consumer_vertex: MSig { owner: cn.vertex_consumer.clone(), name: cs("m_5954_"), sig: cs("(FFFFFFFFFIIFFF)V") },
             vertex_consumer_pos: MSig {
@@ -988,6 +1013,9 @@ impl MN<MSig> {
                 sig: msig([cn.holder.sig.to_bytes(), b"F"], cn.simple_sound_inst.sig.to_bytes()),
             },
             render_type_lightning: MSig { owner: cn.render_type.clone(), name: cs("m_110502_"), sig: msig([], cn.render_type.sig.to_bytes()) },
+            level_renderer_buffers: MSig { owner: cn.level_renderer.clone(), name: cs("f_109464_"), sig: cn.render_buffers.sig.clone() },
+            render_buffers_buffer_source: MSig { owner: cn.render_buffers.clone(), name: cs("f_110094_"), sig: cn.buffer_source.sig.clone() },
+            camera_pos: MSig { owner: cn.camera.clone(), name: cs("f_90552_"), sig: cn.vec3d.sig.clone() },
         };
         if !fmv.fml_naming_is_srg {
             let from = av.ldr.jni.new_utf(c"srg").unwrap();
@@ -1018,6 +1046,9 @@ pub struct MV {
     pub vec3i_x: usize,
     pub vec3i_y: usize,
     pub vec3i_z: usize,
+    pub vec3d_x: usize,
+    pub vec3d_y: usize,
+    pub vec3d_z: usize,
     pub block_pos: GlobalRef<'static>,
     pub block_pos_init: usize,
     pub block_state_get_block: usize,
@@ -1093,7 +1124,8 @@ pub struct MVC {
     pub sprite_v0: usize,
     pub sprite_u1: usize,
     pub sprite_v1: usize,
-    pub buffer_source_get_buffer: usize,
+    pub multi_buffer_source_get_buffer: usize,
+    pub buffer_source_end_batch: usize,
     pub vertex_consumer_vertex: usize,
     pub vertex_consumer_pos: usize,
     pub vertex_consumer_color: usize,
@@ -1144,6 +1176,9 @@ pub struct MVC {
     pub simple_sound_inst: GlobalRef<'static>,
     pub simple_sound_inst_for_ui_holder: usize,
     pub render_type_lightning: GlobalRef<'static>,
+    pub level_renderer_buffers: usize,
+    pub render_buffers_buffer_source: usize,
+    pub camera_pos: usize,
 }
 
 impl MV {
@@ -1155,6 +1190,7 @@ impl MV {
         let block_item = load(&cn.block_item);
         let block_getter = load(&cn.block_getter);
         let vec3i = load(&cn.vec3i);
+        let vec3d = load(&cn.vec3d);
         let block_pos = load(&cn.block_pos);
         let block_state = load(&cn.block_state);
         let tile_type = load(&cn.tile_type);
@@ -1193,6 +1229,9 @@ impl MV {
             vec3i_x: mn.vec3i_x.get_field_id(&vec3i).unwrap(),
             vec3i_y: mn.vec3i_y.get_field_id(&vec3i).unwrap(),
             vec3i_z: mn.vec3i_z.get_field_id(&vec3i).unwrap(),
+            vec3d_x: mn.vec3d_x.get_field_id(&vec3d).unwrap(),
+            vec3d_y: mn.vec3d_y.get_field_id(&vec3d).unwrap(),
+            vec3d_z: mn.vec3d_z.get_field_id(&vec3d).unwrap(),
             block_pos_init: mn.block_pos_init.get_method_id(&block_pos).unwrap(),
             block_pos,
             block_state_get_block: mn.block_state_get_block.get_method_id(&block_state).unwrap(),
@@ -1260,7 +1299,6 @@ impl MV {
                 let matrix4fc = load(&cn.matrix4fc);
                 let atlas = load(&cn.atlas);
                 let sprite = load(&cn.sprite);
-                let buffer_source = load(&cn.multi_buffer_source);
                 let vertex_consumer = load(&cn.vertex_consumer);
                 let menu_screens = load(&cn.menu_screens);
                 let screen = load(&cn.screen);
@@ -1291,7 +1329,8 @@ impl MV {
                     sprite_v0: mn.sprite_v0.get_field_id(&sprite).unwrap(),
                     sprite_u1: mn.sprite_u1.get_field_id(&sprite).unwrap(),
                     sprite_v1: mn.sprite_v1.get_field_id(&sprite).unwrap(),
-                    buffer_source_get_buffer: mn.buffer_source_get_buffer.get_method_id(&buffer_source).unwrap(),
+                    multi_buffer_source_get_buffer: mn.multi_buffer_source_get_buffer.get_method_id(&load(&cn.multi_buffer_source)).unwrap(),
+                    buffer_source_end_batch: mn.buffer_source_end_batch.get_method_id(&load(&cn.buffer_source)).unwrap(),
                     vertex_consumer_vertex: mn.vertex_consumer_vertex.get_method_id(&vertex_consumer).unwrap(),
                     vertex_consumer_pos: mn.vertex_consumer_pos.get_method_id(&vertex_consumer).unwrap(),
                     vertex_consumer_color: mn.vertex_consumer_color.get_method_id(&vertex_consumer).unwrap(),
@@ -1342,6 +1381,9 @@ impl MV {
                     simple_sound_inst_for_ui_holder: mn.simple_sound_inst_for_ui_holder.get_static_method_id(&simple_sound_inst).unwrap(),
                     simple_sound_inst,
                     render_type_lightning: render_type_lightning.new_global_ref().unwrap(),
+                    level_renderer_buffers: mn.level_renderer_buffers.get_field_id(&load(&cn.level_renderer)).unwrap(),
+                    render_buffers_buffer_source: mn.render_buffers_buffer_source.get_field_id(&load(&cn.render_buffers)).unwrap(),
+                    camera_pos: mn.camera_pos.get_field_id(&load(&cn.camera)).unwrap(),
                 }
             }),
         }

@@ -23,6 +23,11 @@ pub trait GeomExt<'a>: JRef<'a> {
         point![self.get_int_field(mv.vec3i_x), self.get_int_field(mv.vec3i_y), self.get_int_field(mv.vec3i_z)]
     }
 
+    fn read_vec3d(&self) -> Point3<f64> {
+        let mv = &objs().mv;
+        point![self.get_double_field(mv.vec3d_x), self.get_double_field(mv.vec3d_y), self.get_double_field(mv.vec3d_z)]
+    }
+
     fn read_chunk_pos(&self) -> Point2<i32> {
         let mv = &objs().mv;
         point![self.get_int_field(mv.chunk_pos_x), self.get_int_field(mv.chunk_pos_z)]

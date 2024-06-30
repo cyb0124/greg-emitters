@@ -1,3 +1,4 @@
+use crate::util::client::ClientExt;
 use crate::util::geometry::GeomExt;
 use crate::util::ClassBuilder;
 use crate::util::{client::Sprite, mapping::GregMV};
@@ -25,7 +26,8 @@ pub fn init() {
     if fmv.client.is_some() {
         add_forge_listener(&fmv.mod_evt_bus, fcn.atlas_evt.sig.to_bytes(), on_forge_atlas_dyn());
         add_forge_listener(&fmv.mod_evt_bus, fcn.renderers_evt.sig.to_bytes(), on_forge_renderers_dyn());
-        add_forge_listener(&fmv.mod_evt_bus, fcn.fml_client_setup_evt.sig.to_bytes(), on_forge_client_setup_dyn())
+        add_forge_listener(&fmv.mod_evt_bus, fcn.fml_client_setup_evt.sig.to_bytes(), on_forge_client_setup_dyn());
+        add_forge_listener(&fmv.com_evt_bus, fcn.render_lvl_stg_evt.sig.to_bytes(), on_level_render_dyn())
     }
 }
 
@@ -92,6 +94,26 @@ fn on_chunk_unwatch(jni: &JNI, _: usize, evt: usize) {
     let pos = evt.get_object_field(fmv.chunk_watch_pos).unwrap().read_chunk_pos();
     let player = evt.get_object_field(fmv.chunk_watch_player).unwrap();
     crate::beams::on_chunk_unwatch(&player, pos)
+}
+
+#[dyn_abi]
+fn on_level_render(jni: &JNI, _: usize, evt: usize) {
+    let fmvc = objs().fmv.client.uref();
+    let mvc = objs().mv.client.uref();
+    let evt = BorrowedRef::new(jni, &evt);
+    let stg = evt.get_object_field(fmvc.render_lvl_stg_evt_stage).unwrap();
+    let true = stg.is_same_object(fmvc.render_lvl_stg_after_tiles.raw) else { return };
+    let pose = evt.get_object_field(fmvc.render_lvl_stg_evt_pose).unwrap().last_pose();
+    let camera = evt.get_object_field(fmvc.render_lvl_stg_evt_camera).unwrap();
+    let camera_pos = camera.get_object_field(mvc.camera_pos).unwrap().read_vec3d().cast();
+    let renderer = evt.get_object_field(fmvc.render_lvl_stg_evt_renderer).unwrap();
+    let buffers = renderer.get_object_field(mvc.level_renderer_buffers).unwrap();
+    let source = buffers.get_object_field(mvc.render_buffers_buffer_source).unwrap();
+    let vb = source.call_object_method(mvc.multi_buffer_source_get_buffer, &[mvc.render_type_lightning.raw]).unwrap().unwrap();
+    for beam in objs().mtx.lock(jni).unwrap().client_state.borrow().beams.values() {
+        beam.render(&vb, &pose, camera_pos)
+    }
+    source.call_void_method(mvc.buffer_source_end_batch, &[mvc.render_type_lightning.raw]).unwrap()
 }
 
 #[dyn_abi]
