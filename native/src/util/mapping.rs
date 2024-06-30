@@ -580,7 +580,7 @@ pub struct MN<T> {
     pub level_update_neighbors_for_out_signal: T,
     pub level_is_client: T,
     pub level_get_chunk_source: T,
-    pub level_is_loaded: T,
+    pub level_is_outside_build_height: T,
     pub container_menu_init: T,
     pub container_menu_still_valid: T,
     pub container_menu_quick_move_stack: T,
@@ -614,6 +614,7 @@ pub struct MN<T> {
     pub chunk_access_pos: T,
     pub level_chunk_set_block_state: T,
     pub level_chunk_level: T,
+    pub chunk_source_get_chunk_now: T,
     // Client
     pub tile_renderer_render: T,
     pub tile_renderer_provider_create: T,
@@ -863,7 +864,7 @@ impl MN<MSig> {
             },
             level_is_client: MSig { owner: cn.level.clone(), name: cs("f_46443_"), sig: cs("Z") },
             level_get_chunk_source: MSig { owner: cn.level.clone(), name: cs("m_7726_"), sig: msig([], cn.chunk_source.sig.to_bytes()) },
-            level_is_loaded: MSig { owner: cn.level.clone(), name: cs("m_46749_"), sig: msig([cn.block_pos.sig.to_bytes()], b"Z") },
+            level_is_outside_build_height: MSig { owner: cn.level.clone(), name: cs("m_151562_"), sig: cs("(I)Z") },
             menu_provider_create_menu: MSig {
                 owner: cn.menu_provider.clone(),
                 name: cs("m_7208_"),
@@ -937,6 +938,11 @@ impl MN<MSig> {
                 sig: msig([cn.block_pos.sig.to_bytes(), cn.block_state.sig.to_bytes(), b"Z"], cn.block_state.sig.to_bytes()),
             },
             level_chunk_level: MSig { owner: cn.level_chunk.clone(), name: cs("f_62776_"), sig: cn.level.sig.clone() },
+            chunk_source_get_chunk_now: MSig {
+                owner: cn.chunk_source.clone(),
+                name: cs("m_7131_"),
+                sig: msig([B("II")], cn.level_chunk.sig.to_bytes()),
+            },
             // Client
             tile_renderer_render: MSig {
                 owner: cn.tile_renderer.clone(),
@@ -1150,7 +1156,7 @@ pub struct MV {
     pub level_update_neighbors_for_out_signal: usize,
     pub level_is_client: usize,
     pub level_get_chunk_source: usize,
-    pub level_is_loaded: usize,
+    pub level_is_outside_build_height: usize,
     pub friendly_byte_buf_read_byte_array: usize,
     pub friendly_byte_buf_write_byte_array: usize,
     pub container_menu_init: usize,
@@ -1186,6 +1192,7 @@ pub struct MV {
     pub block_hit_result_dir: usize,
     pub chunk_access_pos: usize,
     pub level_chunk: GlobalRef<'static>,
+    pub chunk_source_get_chunk_now: usize,
     pub client: Option<MVC>,
 }
 
@@ -1350,7 +1357,7 @@ impl MV {
             level_update_neighbors_for_out_signal: mn.level_update_neighbors_for_out_signal.get_method_id(&level).unwrap(),
             level_is_client: mn.level_is_client.get_field_id(&level).unwrap(),
             level_get_chunk_source: mn.level_get_chunk_source.get_method_id(&level).unwrap(),
-            level_is_loaded: mn.level_is_loaded.get_method_id(&level).unwrap(),
+            level_is_outside_build_height: mn.level_is_outside_build_height.get_method_id(&level).unwrap(),
             friendly_byte_buf_read_byte_array: mn.friendly_byte_buf_read_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
             friendly_byte_buf_write_byte_array: mn.friendly_byte_buf_write_byte_array.get_method_id(&friendly_byte_buf).unwrap(),
             container_menu_init: mn.container_menu_init.get_method_id(&container_menu).unwrap(),
@@ -1386,6 +1393,7 @@ impl MV {
             block_hit_result_dir: mn.block_hit_result_dir.get_field_id(&block_hit_result).unwrap(),
             chunk_access_pos: mn.chunk_access_pos.get_field_id(&load(&cn.chunk_access)).unwrap(),
             level_chunk: load(&cn.level_chunk),
+            chunk_source_get_chunk_now: mn.chunk_source_get_chunk_now.get_method_id(&load(&cn.chunk_source)).unwrap(),
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);

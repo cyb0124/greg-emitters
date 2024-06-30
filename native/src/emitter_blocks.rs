@@ -11,7 +11,7 @@ use crate::{
     util::{
         cleaner::Cleanable,
         client::SolidRenderer,
-        geometry::{lerp, new_voxel_shape, write_block_pos, write_dir, GeomExt, DIR_ATTS},
+        geometry::{block_to_chunk, lerp, new_voxel_shape, write_block_pos, write_dir, GeomExt, DIR_ATTS},
         tile::{Tile, TileExt, TileSupplier},
         ClassBuilder, ThinWrapper,
     },
@@ -53,12 +53,20 @@ struct ServerData {
     energy: i64,
 }
 
+#[derive(Default)]
+struct EnergyStats {
+    eu_accepted: i64,
+    snap_eu_accepted: i64,
+    time: u8,
+}
+
 pub struct Emitter {
     tier: u8,
     energy_cap: GlobalRef<'static>,
     pub common: RefCell<CommonData>,
     server: RefCell<ServerData>,
     pub beam_id: Cell<Option<NonZeroUsize>>,
+    stats: RefCell<EnergyStats>,
 }
 
 impl Cleanable for Emitter {
@@ -103,6 +111,7 @@ impl EmitterBlocks {
             .native_2(&gmn.get_eu_stored, get_eu_stored_dyn())
             .native_2(&gmn.get_eu_capacity, get_eu_capacity_dyn())
             .native_2(&gmn.get_input_volts, get_input_volts_dyn())
+            .native_2(&gmn.get_input_eu_per_sec, get_input_eu_per_sec_dyn())
             .define_thin()
             .wrap::<EnergyContainer>();
 
@@ -259,10 +268,15 @@ impl TileSupplier for EmitterSupplier {
         let block = state.block_state_get_block();
         // Block and tile can mismatch when loading corrupted save.
         let true = block.is_instance_of(defs.block.cls.cls.raw) else { return None };
-        let tier = defs.block.read(&lk, block.borrow()).tier;
         let energy_container = Arc::new(EnergyContainer { tile: OnceCell::new() });
-        let energy_cap = defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap();
-        let emitter = Arc::new(Emitter { tier, energy_cap, common: <_>::default(), server: <_>::default(), beam_id: None.into() });
+        let emitter = Arc::new(Emitter {
+            tier: defs.block.read(&lk, block.borrow()).tier,
+            energy_cap: defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap(),
+            common: <_>::default(),
+            server: <_>::default(),
+            beam_id: None.into(),
+            stats: <_>::default(),
+        });
         let tile = objs().tile_defs.new_tile(pos.jni, defs.tile_type.raw, pos.raw, state.raw, emitter);
         energy_container.tile.set(tile.new_weak_global_ref().unwrap()).ok().unwrap();
         Some(tile)
@@ -276,12 +290,11 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
     let tile = BorrowedRef::new(jni, &tile);
     let level = BorrowedRef::new(jni, &level);
     let tile = lk.read_tile::<Emitter>(tile);
-    let mut state = tile.server.borrow_mut();
     let volts = tile.volts(&*lk.tiers.borrow());
     let mut active = false;
     if let Some(beam_id) = tile.beam_id.get() {
-        let mut srv = lk.server_state.borrow_mut();
-        let srv = &mut *srv;
+        let mut srv_guard = lk.server_state.borrow_mut();
+        let srv = &mut *srv_guard;
         let beam = srv.beams.get_mut(&beam_id).unwrap();
         let mut should_broadcast = false;
         if beam.dirty {
@@ -289,12 +302,13 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
             beam.recompute(jni, &mut srv.players, dim, beam_id);
             should_broadcast = true
         }
+        let hit = beam.hit;
+        drop(srv_guard); // accept_eu may call something that reenters beam related functions.
         'fail: {
-            let true = state.energy >= volts else { break 'fail };
-            let Some((pos, dir)) = beam.hit else { break 'fail };
-            let pos = write_block_pos(jni, pos);
-            let true = level.level_is_loaded(&pos) else { break 'fail };
-            let Some(hit_tile) = level.tile_at(&pos) else { break 'fail };
+            let Some((pos, dir)) = hit else { break 'fail };
+            let true = tile.server.borrow().energy >= volts else { break 'fail };
+            let Some(chunk) = level.level_get_chunk_source().loaded_chunk_at(block_to_chunk(pos)) else { break 'fail };
+            let Some(hit_tile) = chunk.tile_at(&write_block_pos(jni, pos)) else { break 'fail };
             let gmv = lk.gmv.get().unwrap();
             let dir = write_dir(jni, dir);
             let cap = hit_tile.call_object_method(fmv.get_cap, &[gmv.energy_container_cap.raw, dir.raw]).unwrap().unwrap();
@@ -304,6 +318,9 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
             let true = cap.call_bool_method(gmv.can_input_eu_from_side, &[dir.raw]).unwrap() else { break 'fail };
             active = cap.call_long_method(gmv.accept_eu, &[dir.raw, volts as _, 1]).unwrap() > 0
         }
+        srv_guard = lk.server_state.borrow_mut();
+        // accept_eu may have called something that deleted the beam.
+        let Some(beam) = srv_guard.beams.get_mut(&beam_id) else { return };
         if beam.active != active {
             beam.active = active;
             should_broadcast = true
@@ -312,6 +329,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
             beam.broadcast_set_beam(jni, beam_id)
         }
     }
+    let mut state = tile.server.borrow_mut();
     if active || state.energy > 0 {
         state.energy -= if active { volts } else { 1 }; // TODO: configurable quiescent draw
         if tile.beam_id.get().is_none() {
@@ -321,6 +339,13 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
         }
     } else if let Some(beam_id) = tile.beam_id.replace(None) {
         del_beam(jni, &lk, beam_id)
+    }
+    let mut stats = tile.stats.borrow_mut();
+    stats.time += 1;
+    if stats.time == 20 {
+        stats.time = 0;
+        stats.snap_eu_accepted = stats.eu_accepted;
+        stats.eu_accepted = 0
     }
 }
 
@@ -449,6 +474,7 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
         return 0;
     }
     data.energy += volts;
+    emitter.stats.borrow_mut().eu_accepted += volts;
     1
 }
 
@@ -463,4 +489,10 @@ fn change_eu(jni: &JNI, this: usize, delta: i64) -> i64 {
     data.energy - old
 }
 
-// TODO: implement get_input_eu_per_sec
+#[dyn_abi]
+fn get_input_eu_per_sec(jni: &JNI, this: usize) -> i64 {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
+    let result = lk.read_tile::<Emitter>(tile.borrow()).stats.borrow().snap_eu_accepted;
+    result
+}

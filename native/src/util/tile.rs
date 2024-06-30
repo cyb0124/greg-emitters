@@ -15,7 +15,7 @@ use crate::{
 use alloc::{format, sync::Arc, vec::Vec};
 use core::any::Any;
 use macros::dyn_abi;
-use nalgebra::Affine3;
+use nalgebra::{Affine3, Point2};
 use postcard::{de_flavors::Slice, Deserializer, Result};
 
 impl<'a, T: JRef<'a>> TileExt<'a> for T {}
@@ -33,12 +33,16 @@ pub trait TileExt<'a>: JRef<'a> {
         self.call_object_method(objs().mv.block_getter_get_block_state, &[pos.raw()]).unwrap().unwrap()
     }
 
+    fn loaded_chunk_at(&self, pos: Point2<i32>) -> Option<LocalRef<'a>> {
+        self.call_object_method(objs().mv.chunk_source_get_chunk_now, &[pos.x as _, pos.y as _]).unwrap()
+    }
+
     fn tile_at(&self, pos: &impl JRef<'a>) -> Option<LocalRef<'a>> { self.call_object_method(objs().mv.block_getter_get_tile, &[pos.raw()]).unwrap() }
+    fn is_outside_build_height(&self, y: i32) -> bool { self.call_bool_method(objs().mv.level_is_outside_build_height, &[y as _]).unwrap() }
     fn level_is_client(&self) -> bool { self.get_bool_field(objs().mv.level_is_client) }
-    fn level_is_loaded(&self, pos: &impl JRef<'a>) -> bool { self.call_bool_method(objs().mv.level_is_loaded, &[pos.raw()]).unwrap() }
+    fn level_get_chunk_source(&self) -> LocalRef<'a> { self.call_object_method(objs().mv.level_get_chunk_source, &[]).unwrap().unwrap() }
     fn level_mark_for_broadcast(&self, pos: &impl JRef<'a>) {
-        let chunk_source = self.call_object_method(objs().mv.level_get_chunk_source, &[]).unwrap().unwrap();
-        chunk_source.call_void_method(objs().mv.server_chunk_cache_block_changed, &[pos.raw()]).unwrap()
+        self.level_get_chunk_source().call_void_method(objs().mv.server_chunk_cache_block_changed, &[pos.raw()]).unwrap()
     }
 }
 

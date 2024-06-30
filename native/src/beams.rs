@@ -178,7 +178,7 @@ impl BeamState {
         }
     }
 
-    // Only send DelBeam, not SetBeam.
+    // Will send DelBeam to players that can no longer see the beam, but not SetBeam.
     pub fn recompute(&mut self, jni: &'static JNI, players: &mut HashTable<PlayerState>, dim: &mut DimState, id: NonZeroUsize) {
         let mv = &objs().mv;
         let old_chunks = take(&mut self.chunks);
@@ -189,19 +189,21 @@ impl BeamState {
         let mut covering = CoveringBlocks::new(self.src, Vector3::from_element(0.5), self.dir);
         let j_src = write_vec3d(jni, covering.pos.cast::<f64>().map(|x| x + 0.5));
         let level = self.level.0.with_jni(jni);
+        let chunk_source = level.level_get_chunk_source();
         loop {
             covering.step();
-            self.chunks.insert(block_to_chunk(covering.pos));
+            let chunk = block_to_chunk(covering.pos);
+            self.chunks.insert(chunk);
             self.blocks.push(covering.pos);
             dim.track_block(covering.pos, id);
-            let pos = write_block_pos(jni, covering.pos);
-            if !level.level_is_loaded(&pos) {
+            let Some(Some(chunk)) = (!level.is_outside_build_height(covering.pos.y)).then(|| chunk_source.loaded_chunk_at(chunk)) else {
                 self.dst = covering.pos.cast::<f32>() + covering.frac;
                 self.hit = None;
                 break;
-            }
-            let state = level.block_state_at(&pos);
-            let args = [level.raw, pos.raw, mv.collision_ctx_empty.raw];
+            };
+            let pos = write_block_pos(jni, covering.pos);
+            let state = chunk.block_state_at(&pos);
+            let args = [chunk.raw, pos.raw, mv.collision_ctx_empty.raw];
             let shape = state.call_object_method(mv.block_state_get_visual_shape, &args).unwrap().unwrap();
             let j_dst = write_vec3d(jni, (covering.pos.cast::<f32>() + covering.frac + self.dir.into_inner() * 2.).cast());
             if let Some(hit) = shape.call_object_method(mv.voxel_shape_clip, &[j_src.raw, j_dst.raw, pos.raw]).unwrap() {
