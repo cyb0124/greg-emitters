@@ -290,7 +290,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
     let tile = BorrowedRef::new(jni, &tile);
     let level = BorrowedRef::new(jni, &level);
     let tile = lk.read_tile::<Emitter>(tile);
-    let volts = tile.volts(&*lk.tiers.borrow());
+    let volts = tile.volts(&*lk.tiers.borrow()).min(tile.server.borrow().energy);
     let mut active = false;
     if let Some(beam_id) = tile.beam_id.get() {
         let mut srv_guard = lk.server_state.borrow_mut();
@@ -306,7 +306,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
         drop(srv_guard); // accept_eu may call something that reenters beam related functions.
         'fail: {
             let Some((pos, dir)) = hit else { break 'fail };
-            let true = tile.server.borrow().energy >= volts else { break 'fail };
+            let true = volts > 0 else { break 'fail };
             let Some(chunk) = level.level_get_chunk_source().loaded_chunk_at(block_to_chunk(pos)) else { break 'fail };
             let Some(hit_tile) = chunk.tile_at(&write_block_pos(jni, pos)) else { break 'fail };
             let gmv = lk.gmv.get().unwrap();
