@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub enum C2S {
-    SetEmitterAttitude { menu_id: i32, polar: f32, azimuth: f32 },
+    SetEmitterAttitude { menu_id: i32, zenith: f32, azimuth: f32 },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -42,7 +42,7 @@ pub fn handle_c2s(lk: &GlobalMtx, data: &[u8], player: BorrowedRef<'static, '_>)
     let gui_defs = &objs().gui_defs;
     let data: C2S = postcard::from_bytes(data).map_err(|e| anyhow!("{e}"))?;
     Ok(match data {
-        C2S::SetEmitterAttitude { menu_id, polar, azimuth } => {
+        C2S::SetEmitterAttitude { menu_id, zenith, azimuth } => {
             let menu = player.player_container_menu().context("no menu")?;
             ensure!(menu.menu_id() == menu_id);
             ensure!(menu.is_instance_of(gui_defs.menu.cls.cls.raw));
@@ -51,7 +51,7 @@ pub fn handle_c2s(lk: &GlobalMtx, data: &[u8], player: BorrowedRef<'static, '_>)
             let level = j_tile.tile_level().context("dead tile")?;
             let tile = lk.read_tile::<Emitter>(j_tile.borrow());
             let mut common = tile.common.borrow_mut();
-            common.polar = if polar.is_finite() { polar.clamp(0., FRAC_PI_2) } else { 0. };
+            common.zenith = if zenith.is_finite() { zenith.clamp(0., FRAC_PI_2) } else { 0. };
             common.azimuth = if azimuth.is_finite() { azimuth.rem_euclid(&TAU) } else { 0. };
             drop(common);
             if let Some(beam_id) = tile.beam_id.get() {

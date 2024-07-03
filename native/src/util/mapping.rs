@@ -404,6 +404,7 @@ pub struct CN<T> {
     pub level_renderer: T,
     pub render_buffers: T,
     pub camera: T,
+    pub local_player: T,
 }
 
 impl CN<Arc<CSig>> {
@@ -515,6 +516,7 @@ impl CN<Arc<CSig>> {
             level_renderer: b"net.minecraft.client.renderer.LevelRenderer",
             render_buffers: b"net.minecraft.client.renderer.RenderBuffers",
             camera: b"net.minecraft.client.Camera",
+            local_player: b"net.minecraft.client.player.LocalPlayer",
         };
         names.fmap(|x| Arc::new(CSig::new(x)))
     }
@@ -596,6 +598,7 @@ pub struct MN<T> {
     pub friendly_byte_buf_write_byte_array: T,
     pub inventory_player: T,
     pub entity_level: T,
+    pub entity_y_rot: T,
     pub container_still_valid: T,
     pub player_profile: T,
     pub player_container_menu: T,
@@ -674,6 +677,7 @@ pub struct MN<T> {
     pub mc_get_window: T,
     pub mc_get_sound_mgr: T,
     pub mc_clear_level: T,
+    pub mc_player: T,
     pub window_get_gui_scale: T,
     pub font_width: T,
     pub sound_mgr_play: T,
@@ -900,6 +904,7 @@ impl MN<MSig> {
             },
             inventory_player: MSig { owner: cn.inventory.clone(), name: cs("f_35978_"), sig: cn.player.sig.clone() },
             entity_level: MSig { owner: cn.entity.clone(), name: cs("m_9236_"), sig: msig([], cn.level.sig.to_bytes()) },
+            entity_y_rot: MSig { owner: cn.entity.clone(), name: cs("f_19857_"), sig: cs("F") },
             container_still_valid: MSig {
                 owner: cn.container.clone(),
                 name: cs("m_272074_"),
@@ -1073,6 +1078,7 @@ impl MN<MSig> {
             mc_get_window: MSig { owner: cn.mc.clone(), name: cs("m_91268_"), sig: msig([], cn.window.sig.to_bytes()) },
             mc_get_sound_mgr: MSig { owner: cn.mc.clone(), name: cs("m_91106_"), sig: msig([], cn.sound_mgr.sig.to_bytes()) },
             mc_clear_level: MSig { owner: cn.mc.clone(), name: cs("m_91320_"), sig: msig([cn.screen.sig.to_bytes()], b"V") },
+            mc_player: MSig { owner: cn.mc.clone(), name: cs("f_91074_"), sig: cn.local_player.sig.clone() },
             window_get_gui_scale: MSig { owner: cn.window.clone(), name: cs("m_85449_"), sig: cs("()D") },
             font_width: MSig { owner: cn.font.clone(), name: cs("m_92724_"), sig: msig([cn.formatted_char_seq.sig.to_bytes()], b"I") },
             sound_mgr_play: MSig { owner: cn.sound_mgr.clone(), name: cs("m_120367_"), sig: msig([cn.sound_inst.sig.to_bytes()], b"V") },
@@ -1176,6 +1182,7 @@ pub struct MV {
     pub server_pkt_listener_impl_conn: usize,
     pub inventory_player: usize,
     pub entity_level: usize,
+    pub entity_y_rot: usize,
     pub container: GlobalRef<'static>,
     pub container_still_valid: usize,
     pub player_profile: usize,
@@ -1255,6 +1262,7 @@ pub struct MVC {
     pub mc: GlobalRef<'static>,
     pub mc_inst: GlobalRef<'static>,
     pub mc_get_sound_mgr: usize,
+    pub mc_player: usize,
     pub sound_mgr_play: usize,
     pub simple_sound_inst: GlobalRef<'static>,
     pub simple_sound_inst_for_ui_holder: usize,
@@ -1377,6 +1385,7 @@ impl MV {
             server_pkt_listener_impl_conn: mn.server_pkt_listener_impl_conn.get_field_id(&load(&cn.server_pkt_listener_impl)).unwrap(),
             inventory_player: mn.inventory_player.get_field_id(&load(&cn.inventory)).unwrap(),
             entity_level: mn.entity_level.get_method_id(&load(&cn.entity)).unwrap(),
+            entity_y_rot: mn.entity_y_rot.get_field_id(&load(&cn.entity)).unwrap(),
             container_still_valid: mn.container_still_valid.get_static_method_id(&container).unwrap(),
             container,
             player_profile: mn.player_profile.get_field_id(&player).unwrap(),
@@ -1473,6 +1482,7 @@ impl MV {
                     window_inst: window_inst.new_global_ref().unwrap(),
                     font_width: mn.font_width.get_method_id(&load(&cn.font)).unwrap(),
                     mc_get_sound_mgr: mn.mc_get_sound_mgr.get_method_id(&mc).unwrap(),
+                    mc_player: mn.mc_player.get_field_id(&mc).unwrap(),
                     mc_inst: mc_inst.new_global_ref().unwrap(),
                     mc,
                     sound_mgr_play: mn.sound_mgr_play.get_method_id(&load(&cn.sound_mgr)).unwrap(),

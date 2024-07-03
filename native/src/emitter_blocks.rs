@@ -44,7 +44,7 @@ pub struct EmitterBlocks {
 #[derive(Default, Serialize, Deserialize)]
 pub struct CommonData {
     pub dir: Option<u8>,
-    pub polar: f32,
+    pub zenith: f32,
     pub azimuth: f32,
 }
 
@@ -77,8 +77,9 @@ impl Emitter {
     fn volts(&self, tiers: &[Tier]) -> i64 { tiers[self.tier as usize].volt }
     fn eu_capacity(&self, tiers: &[Tier]) -> i64 { self.volts(tiers) * 2 }
     pub fn compute_dir(&self) -> Option<UnitVector3<f32>> {
-        let CommonData { dir, polar, azimuth } = *self.common.borrow();
-        Some(DIR_ATTS[dir? as usize] * DIR_ATTS[0] * UnitQuaternion::from_euler_angles(polar, azimuth, 0.) * Unit::new_unchecked(vector![0., 1., 0.]))
+        let CommonData { dir, zenith, azimuth } = *self.common.borrow();
+        let att = DIR_ATTS[dir? as usize] * DIR_ATTS[0] * UnitQuaternion::from_euler_angles(zenith, azimuth, 0.);
+        Some(att * Unit::new_unchecked(vector![0., 1., 0.]))
     }
 }
 
@@ -183,7 +184,7 @@ impl Tile for Emitter {
 
     fn invalidate_caps(&self, jni: &JNI, lk: &GlobalMtx) {
         self.energy_cap.with_jni(jni).lazy_opt_invalidate();
-        if let Some(beam_id) = self.beam_id.replace(None) {
+        if let Some(beam_id) = self.beam_id.take() {
             del_beam(jni, lk, beam_id)
         }
     }
@@ -212,7 +213,7 @@ impl Tile for Emitter {
         // Cylinder (r, h, v)
         const CONTOUR: [(f32, f32, f32); 4] = [(1., 0., 0.), (1., 1., 1.), (0.9, 1., 0.8), (0.6, 0.8, 0.6)];
         const N_SEGS: usize = 8;
-        tf *= UnitQuaternion::from_euler_angles(common.polar, 0., 0.);
+        tf *= UnitQuaternion::from_euler_angles(common.zenith, 0., 0.);
         let base = vector![RADIUS, libm::tanf(PI / N_SEGS as f32) * RADIUS];
         let bot_y = LEG_LEN - 0.5;
         let bot_q = tf * point![0., bot_y, 0.];
@@ -337,7 +338,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
                 tile.beam_id.set(Some(add_beam(&lk, &level, tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), dir)))
             }
         }
-    } else if let Some(beam_id) = tile.beam_id.replace(None) {
+    } else if let Some(beam_id) = tile.beam_id.take() {
         del_beam(jni, &lk, beam_id)
     }
     let mut stats = tile.stats.borrow_mut();
@@ -407,7 +408,7 @@ fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: us
     let item = tiers[lk.read_tile::<Emitter>(tile.borrow()).tier as usize].emitter_item.get().unwrap().with_jni(jni);
     let title = item.call_nonvirtual_object_method(mv.item.raw, mv.item_get_desc_id, &[]).unwrap().unwrap();
     let data = postcard::to_allocvec(&pos.read_vec3i()).unwrap();
-    let menu = EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into() };
+    let menu = EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into(), view_tf: <_>::default() };
     gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(menu), &title, data);
     mv.interaction_result_consume.raw
 }

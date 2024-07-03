@@ -2,12 +2,13 @@ use crate::{
     emitter_blocks::{CommonData, Emitter},
     global::GlobalMtx,
     jvm::*,
+    mapping_base::MBOptExt,
     objs,
     packets::C2S,
     util::{
         cleaner::Cleanable,
         client::{play_btn_click_sound, ClientExt},
-        geometry::{write_block_pos, Rect, DIR_ADJS},
+        geometry::{write_block_pos, Rect, DIR_ADJS, DIR_STEPS},
         gui::{GUIExt, Menu, MenuType},
         tessellator::{Rounding, Stroke, Tessellator},
         tile::TileExt,
@@ -17,23 +18,40 @@ use alloc::sync::Arc;
 use core::{
     any::Any,
     cell::Cell,
-    f32::consts::{FRAC_PI_2, FRAC_PI_6},
+    f32::consts::{FRAC_PI_2, FRAC_PI_6, PI},
 };
-use nalgebra::{vector, Point2, Point3, Rotation2, Vector2, Vector4};
+use nalgebra::{vector, Matrix2, Point2, Point3, Rotation2, Vector2, Vector4};
+use num_traits::Float;
 
 pub struct EmitterMenuType;
 pub struct EmitterMenu {
     pub tile: WeakGlobalRef<'static>,
     pub dragged: Cell<bool>,
+    pub view_tf: Matrix2<f32>,
 }
 
 impl MenuType for EmitterMenuType {
     fn raw(&self, lk: &GlobalMtx) -> usize { lk.emitter_blocks.get().unwrap().menu_type.raw }
-    fn new_client(&self, _lk: &GlobalMtx, level: BorrowedRef<'static, '_>, data: &[u8]) -> Option<Arc<dyn Menu>> {
+    fn new_client(&self, lk: &GlobalMtx, level: BorrowedRef<'static, '_>, data: &[u8]) -> Option<Arc<dyn Menu>> {
         let pos: Point3<i32> = postcard::from_bytes(data).ok()?;
         let tile = level.tile_at(&write_block_pos(level.jni, pos))?;
         let true = tile.is_instance_of(objs().tile_defs.tile.cls.cls.raw) else { return None };
-        Some(Arc::new(EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into() }))
+        let dir = lk.try_read_tile::<Emitter>(tile.borrow())?.common.borrow().dir?;
+        let mvc = objs().mv.client.uref();
+        let y_rot = mvc.mc_inst.with_jni(level.jni).get_object_field(mvc.mc_player).unwrap().get_float_field(objs().mv.entity_y_rot) + 90.;
+        let mut view_tf;
+        if dir < 2 {
+            let rot = ((y_rot / 15.).round() * 15.).to_radians();
+            view_tf = Matrix2::from(Rotation2::new(if dir == 0 { PI + rot } else { -rot }));
+        } else {
+            let e = if dir == 2 { -1. } else { 1. };
+            view_tf = Matrix2::new(0., e, e, 0.);
+            let player_dir = Rotation2::new(y_rot.to_radians()) * vector![1., 0.];
+            if DIR_STEPS[dir as usize].xz().cast().dot(&player_dir) < 0. {
+                view_tf.row_mut(0).apply(|x| *x = -*x)
+            }
+        }
+        Some(Arc::new(EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into(), view_tf }))
     }
 }
 
@@ -57,14 +75,14 @@ impl Menu for EmitterMenu {
     fn render_bg(&self, lk: &GlobalMtx, screen: BorrowedRef, gui: BorrowedRef, rect: Rect) {
         let Ok(tile) = self.tile.with_jni(gui.jni).new_local_ref() else { return };
         let Some(tile) = lk.try_read_tile::<Emitter>(tile.borrow()) else { return };
-        let CommonData { polar, azimuth, dir } = *tile.common.borrow();
+        let CommonData { zenith, azimuth, dir } = *tile.common.borrow();
         let Some(dir) = dir else { return };
         let mut tess = Tessellator::new(gui.jni);
         tess.rect(rect, Rounding::same(4.), 0., vector![1., 1., 1., 0.5], &Stroke::new(1., vector![0., 0., 0., 1.]));
         let center = grid_center(&rect);
         let grid_stroke = Stroke::new(1., vector![0.25, 0.25, 0.25, 1.]);
 
-        // Polar Grid
+        // Zenith Grid
         for i in 1..=3 {
             let radius = (i * 30) as f32 * (GRID_RADIUS / 90.);
             tess.circle(center, radius, Vector4::zeros(), &grid_stroke);
@@ -74,10 +92,10 @@ impl Menu for EmitterMenu {
         let mut div = vector![GRID_RADIUS, 0.];
         let mut step = Rotation2::new(FRAC_PI_6);
         for _ in 0..12 {
-            tess.line([center, center + div], &grid_stroke);
+            tess.line([center, center + self.view_tf * div], &grid_stroke);
             div = step * div
         }
-        let pos = center + Rotation2::new(-azimuth) * vector![polar * (GRID_RADIUS / FRAC_PI_2), 0.];
+        let pos = center + self.view_tf * Rotation2::new(-azimuth) * vector![zenith * (GRID_RADIUS / FRAC_PI_2), 0.];
         tess.circle(pos, 4., vector![1., 0., 0., 1.], &Stroke::new(1., vector![0., 0., 0., 1.]));
         gui.gui_draw_mesh(&mut tess.mesh);
 
@@ -89,7 +107,7 @@ impl Menu for EmitterMenu {
             let text = [c"D", c"U", c"N", c"S", c"W", c"E"][dir as usize];
             let text = gui.jni.new_utf(text).unwrap().literal().to_formatted();
             let width = font.font_width(&text);
-            let pos = center + div - vector![width as f32 * 0.5, 4.5];
+            let pos = center + self.view_tf * div - vector![width as f32 * 0.5, 4.5];
             gui.gui_draw_formatted(&font, &text, pos.x as _, pos.y as _, 0, false);
             div = step * div
         }
@@ -123,10 +141,10 @@ impl Menu for EmitterMenu {
 
 impl EmitterMenu {
     fn send_attitude(&self, menu: BorrowedRef, rect: Rect, pos: Point2<f32>) {
-        let dir = pos - grid_center(&rect);
-        let polar = dir.norm() * (FRAC_PI_2 / GRID_RADIUS);
+        let dir = self.view_tf.transpose() * (pos - grid_center(&rect));
+        let zenith = dir.norm() * (FRAC_PI_2 / GRID_RADIUS);
         let azimuth = -libm::atan2f(dir.y, dir.x);
         let menu_id = menu.get_int_field(objs().mv.container_menu_id);
-        objs().net_defs.send_c2s(menu.jni, &C2S::SetEmitterAttitude { menu_id, polar, azimuth });
+        objs().net_defs.send_c2s(menu.jni, &C2S::SetEmitterAttitude { menu_id, zenith, azimuth });
     }
 }
