@@ -1,6 +1,6 @@
 import os
 
-OUT_DIRS = ['forge-1.20.1/src/generated/resources']
+OUT_DIRS = ['forge-1.20.1/src/generated/resources/']
 ARCHS = ['x64', 'aarch64']
 
 def find_symbol(linker_map, name):
@@ -36,5 +36,5 @@ for arch in ARCHS:
   out += win.to_bytes(4, 'big')
   out += reloc.to_bytes(4, 'big')
   for dir in OUT_DIRS:
-    with open(f'{dir}/{arch}.bin', 'wb') as f:
+    with open(f'{dir}{arch}.bin', 'wb') as f:
       f.write(out)
