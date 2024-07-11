@@ -6,12 +6,13 @@ use super::{
 };
 use crate::{
     asm::*,
-    global::{GlobalMtx, GlobalObjs},
+    global::{warn, GlobalMtx, GlobalObjs},
     jvm::*,
     mapping_base::*,
     objs,
 };
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{format, sync::Arc, vec::Vec};
+use anyhow::Result;
 use core::{any::Any, cell::RefCell};
 use macros::dyn_abi;
 use nalgebra::{Point2, Vector2};
@@ -46,15 +47,15 @@ pub trait Menu: Cleanable {
     fn get_size(&self) -> Vector2<i32>;
     fn get_offset(&self) -> Vector2<i32>;
     fn should_draw_dark_bg(&self) -> bool;
-    fn render_bg(&self, lk: &GlobalMtx, screen: BorrowedRef, gui: BorrowedRef, rect: Rect);
+    fn render_bg(&self, lk: &GlobalMtx, screen: BorrowedRef, gui: BorrowedRef, rect: Rect, cursor: Point2<i32>);
     fn mouse_clicked(&self, lk: &GlobalMtx, menu: BorrowedRef, rect: Rect, pos: Point2<f32>, button: i32) -> bool;
     fn mouse_dragged(&self, lk: &GlobalMtx, menu: BorrowedRef, rect: Rect, pos: Point2<f32>) -> bool;
-    fn mouse_released(&self, lk: &GlobalMtx, button: i32) -> bool;
+    fn mouse_released(&self, lk: &GlobalMtx, menu: BorrowedRef, button: i32) -> bool;
     fn still_valid(&self, player: BorrowedRef) -> bool;
 }
 
 pub trait MenuType: Send {
-    fn new_client(&self, lk: &GlobalMtx, level: BorrowedRef<'static, '_>, data: &[u8]) -> Option<Arc<dyn Menu>>;
+    fn new_client(&self, lk: &GlobalMtx, level: BorrowedRef<'static, '_>, data: &[u8]) -> Result<Arc<dyn Menu>>;
     fn raw(&self, lk: &GlobalMtx) -> usize;
 }
 
@@ -127,16 +128,26 @@ impl GUIDefs {
 
 #[dyn_abi]
 fn container_factory_create(jni: &'static JNI, this: usize, id: i32, inv: usize, data: usize) -> usize {
-    let GlobalObjs { mtx, gui_defs, mv, .. } = objs();
+    let GlobalObjs { av, mtx, gui_defs, mv, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let this = gui_defs.container_factory.read(&lk, BorrowedRef::new(jni, &this));
     let player = BorrowedRef::new(jni, &inv).get_object_field(mv.inventory_player).unwrap();
     let level = player.call_object_method(mv.entity_level, &[]).unwrap().unwrap();
     let data = BorrowedRef::new(jni, &data).call_object_method(mv.friendly_byte_buf_read_byte_array, &[]).unwrap().unwrap();
-    let Some(menu) = this.new_client(&lk, level.borrow(), &data.byte_elems().unwrap()) else { return 0 };
-    let menu = gui_defs.menu.new_obj(jni, menu);
-    menu.call_void_method(mv.container_menu_init, &[this.raw(&lk), id as _]).unwrap();
-    menu.into_raw()
+    let menu = this.new_client(&lk, level.borrow(), &data.byte_elems().unwrap());
+    match menu {
+        Ok(menu) => {
+            let menu = gui_defs.menu.new_obj(jni, menu);
+            menu.call_void_method(mv.container_menu_init, &[this.raw(&lk), id as _]).unwrap();
+            menu.into_raw()
+        }
+        Err(e) => {
+            let text = cs(format!("Failed to create menu: {e:?}"));
+            warn(jni, &text);
+            av.jv.runtime_exception.with_jni(jni).throw_new(&text).unwrap();
+            0
+        }
+    }
 }
 
 #[dyn_abi]

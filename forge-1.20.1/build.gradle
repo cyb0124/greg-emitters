@@ -16,7 +16,7 @@ repositories {
 }
 version = mod_version
 group = mod_group_id
-base { archivesName = mod_id }
+base { archivesName = mod_id + "-" + minecraft_version }
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 minecraft {
     mappings channel: mapping_channel, version: mapping_version

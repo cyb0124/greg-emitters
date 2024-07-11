@@ -120,11 +120,11 @@ fn task_run(jni: &'static JNI, this: usize) {
         if let Err(e) = handle_c2s(&lk, &*msg, player.borrow()) {
             let profile = player.get_object_field(mv.player_profile).unwrap();
             let name = profile.call_object_method(mv.game_profile_get_name, &[]).unwrap().unwrap();
-            warn(jni, format!("Failed to handle packet from player {}: {e:?}", BStr::new(&*name.utf_chars().unwrap())))
+            warn(jni, &cs(format!("Failed to handle packet from player {}: {e:?}", BStr::new(&*name.utf_chars().unwrap()))))
         }
     } else if dir.is_same_object(fmv.network_dir_s2c.raw) {
         if let Err(e) = handle_s2c(&lk, &*msg) {
-            warn(jni, format!("Failed to handle packet from server: {e:?}"))
+            warn(jni, &cs(format!("Failed to handle packet from server: {e:?}")))
         }
     }
 }

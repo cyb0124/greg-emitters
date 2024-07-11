@@ -10,7 +10,7 @@ use macros::dyn_abi;
 use nalgebra::Point2;
 
 pub const MOD_ID: &str = "greg_emitters";
-pub const PROTOCOL_VERSION: &CStr = c"0";
+pub const PROTOCOL_VERSION: &CStr = c"1";
 pub const EMITTER_ID: &str = "emitter";
 
 pub fn init() {

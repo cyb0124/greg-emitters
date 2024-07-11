@@ -22,6 +22,7 @@ use crate::{
 use alloc::{format, sync::Arc, vec::Vec};
 use core::{
     cell::{Cell, OnceCell, RefCell},
+    ffi::CStr,
     str,
 };
 use hashbrown::HashMap;
@@ -146,9 +147,7 @@ impl GlobalObjs {
     }
 }
 
-pub fn warn(jni: &JNI, text: impl Into<Vec<u8>>) {
-    objs().logger.with_jni(jni).call_void_method(objs().logger_warn, &[jni.new_utf(&cs(text.into())).unwrap().raw]).unwrap()
-}
+pub fn warn(jni: &JNI, text: &CStr) { objs().logger.with_jni(jni).call_void_method(objs().logger_warn, &[jni.new_utf(text).unwrap().raw]).unwrap() }
 
 #[dyn_abi]
 fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
@@ -174,7 +173,7 @@ fn greg_reg_item_stub(jni: &'static JNI, _: usize, name: usize) -> usize {
             let color = fmt.get_object_field(mv.chat_fmt_color).unwrap().int_value(&av.jv).unwrap();
             tiers.push(Tier {
                 volt,
-                color: vector![(color >> 16) as f32 / 255., ((color >> 8) & 255) as f32 / 255., (color & 255) as f32 / 255.],
+                color: vector![color >> 16, (color >> 8) & 255, color & 255].map(|x| x as f32 / 255.),
                 name,
                 has_emitter: false,
                 emitter_sprite: None,

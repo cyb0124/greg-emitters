@@ -18,13 +18,14 @@ use crate::{
     registry::MOD_ID,
 };
 use alloc::{ffi::CString, format, sync::Arc, vec::Vec};
+use anyhow::{anyhow, ensure, Result};
 use core::{
     ffi::CStr,
     marker::{PhantomData, Unsize},
     mem::transmute_copy,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 
 impl<'a, T: JRef<'a>> UtilExt<'a> for T {}
 pub trait UtilExt<'a>: JRef<'a> {
@@ -39,6 +40,12 @@ pub fn serialize_to_byte_array<'a>(jni: &'a JNI, data: &impl Serialize) -> Local
     let ba = jni.new_byte_array(data.len() as _).unwrap();
     ba.write_byte_array(&*data, 0).unwrap();
     ba
+}
+
+pub fn strict_deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    let (result, remain) = postcard::take_from_bytes(bytes).map_err(|e| anyhow!("{e}"))?;
+    ensure!(remain.is_empty());
+    Ok(result)
 }
 
 #[derive(Default)]

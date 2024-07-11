@@ -12,11 +12,13 @@ use crate::{
         cleaner::Cleanable,
         client::SolidRenderer,
         geometry::{block_to_chunk, lerp, new_voxel_shape, write_block_pos, write_dir, GeomExt, DIR_ATTS},
+        strict_deserialize,
         tile::{Tile, TileExt, TileSupplier},
         ClassBuilder, ThinWrapper,
     },
 };
 use alloc::{format, sync::Arc, vec::Vec};
+use anyhow::Result;
 use core::{
     any::Any,
     array,
@@ -26,7 +28,6 @@ use core::{
 };
 use macros::dyn_abi;
 use nalgebra::{point, vector, Affine3, Point, Scale3, Translation3, Unit, UnitQuaternion, UnitVector3};
-use postcard::{de_flavors::Slice, Deserializer, Result};
 use serde::{Deserialize, Serialize};
 use simba::scalar::SupersetOf;
 
@@ -37,19 +38,40 @@ pub struct EmitterBlocks {
     pub tile_type: GlobalRef<'static>,
     energy_container: ThinWrapper<EnergyContainer>,
     shapes: [GlobalRef<'static>; 6],
-    shape_fallback: GlobalRef<'static>,
     pub menu_type: GlobalRef<'static>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
-pub struct CommonData {
-    pub dir: Option<u8>,
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct EmitterData {
+    pub dir: u8,
     pub zenith: f32,
     pub azimuth: f32,
+    pub disable_transfer: bool,
+    pub energy: i64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
-struct ServerData {
+#[derive(Serialize, Deserialize)]
+struct SyncData {
+    pub dir: u8,
+    pub zenith: f32,
+    pub azimuth: f32,
+    pub disable_transfer: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+enum SaveData {
+    V0(EmitterData),
+}
+
+#[derive(Deserialize)]
+struct LegacySyncData {
+    dir: Option<u8>,
+    zenith: f32,
+    azimuth: f32,
+}
+
+#[derive(Deserialize)]
+struct LegacySaveData {
     energy: i64,
 }
 
@@ -63,8 +85,7 @@ struct EnergyStats {
 pub struct Emitter {
     tier: u8,
     energy_cap: GlobalRef<'static>,
-    pub common: RefCell<CommonData>,
-    server: RefCell<ServerData>,
+    pub data: RefCell<EmitterData>,
     pub beam_id: Cell<Option<NonZeroUsize>>,
     stats: RefCell<EnergyStats>,
 }
@@ -76,10 +97,12 @@ impl Cleanable for Emitter {
 impl Emitter {
     fn volts(&self, tiers: &[Tier]) -> i64 { tiers[self.tier as usize].volt }
     fn eu_capacity(&self, tiers: &[Tier]) -> i64 { self.volts(tiers) * 2 }
-    pub fn compute_dir(&self) -> Option<UnitVector3<f32>> {
-        let CommonData { dir, zenith, azimuth } = *self.common.borrow();
-        let att = DIR_ATTS[dir? as usize] * DIR_ATTS[0] * UnitQuaternion::from_euler_angles(zenith, azimuth, 0.);
-        Some(att * Unit::new_unchecked(vector![0., 1., 0.]))
+}
+
+impl EmitterData {
+    pub fn compute_dir(&self) -> UnitVector3<f32> {
+        let att = DIR_ATTS[self.dir as usize] * DIR_ATTS[0] * UnitQuaternion::from_euler_angles(self.zenith, self.azimuth, 0.);
+        att * Unit::new_unchecked(vector![0., 1., 0.])
     }
 }
 
@@ -159,7 +182,6 @@ impl EmitterBlocks {
             tile_type: tile_defs.new_tile_type(jni, &EmitterSupplier, &blocks),
             energy_container,
             shapes,
-            shape_fallback: new_voxel_shape(jni, center.map(|x| x - RADIUS), center.map(|x| x + RADIUS)),
             menu_type: gui_defs.new_menu_type(jni, &EmitterMenuType).new_global_ref().unwrap(),
         }
     }
@@ -167,15 +189,32 @@ impl EmitterBlocks {
 
 impl Tile for Emitter {
     fn any(&self) -> &dyn Any { self }
-    fn save_common(&self) -> Vec<u8> { postcard::to_allocvec(&*self.common.borrow()).unwrap() }
-    fn save_server(&self) -> Vec<u8> { postcard::to_allocvec(&*self.server.borrow()).unwrap() }
-
-    fn load_common<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()> {
-        CommonData::deserialize_in_place(de, &mut *self.common.borrow_mut())
+    fn encode_save(&self) -> Vec<u8> { postcard::to_allocvec(&SaveData::V0(self.data.borrow().clone())).unwrap() }
+    fn encode_sync(&self) -> Vec<u8> {
+        let EmitterData { dir, zenith, azimuth, disable_transfer, .. } = *self.data.borrow();
+        postcard::to_allocvec(&SyncData { dir, zenith, azimuth, disable_transfer }).unwrap()
     }
 
-    fn load_server<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()> {
-        ServerData::deserialize_in_place(de, &mut *self.server.borrow_mut())
+    fn decode_save(&self, bytes: &[u8]) -> Result<()> {
+        let mut data = self.data.borrow_mut();
+        Ok(match strict_deserialize::<SaveData>(bytes) {
+            Ok(SaveData::V0(x)) => *data = x,
+            Err(e) => match strict_deserialize::<LegacySaveData>(bytes) {
+                Ok(LegacySaveData { energy }) => data.energy = energy,
+                Err(_) => return Err(e),
+            },
+        })
+    }
+
+    fn decode_sync(&self, bytes: &[u8]) -> Result<()> {
+        let mut data = self.data.borrow_mut();
+        Ok(match strict_deserialize::<SyncData>(bytes) {
+            Ok(SyncData { dir, zenith, azimuth, disable_transfer }) => *data = EmitterData { dir, zenith, azimuth, disable_transfer, ..*data },
+            Err(e) => match strict_deserialize::<LegacySyncData>(bytes) {
+                Ok(LegacySyncData { dir: Some(dir), zenith, azimuth }) => *data = EmitterData { dir, zenith, azimuth, ..*data },
+                _ => return Err(e),
+            },
+        })
     }
 
     fn get_cap(&self, cap: BorrowedRef) -> Option<usize> {
@@ -190,10 +229,9 @@ impl Tile for Emitter {
     }
 
     fn render(&self, lk: &GlobalMtx, mut sr: SolidRenderer, mut tf: Affine3<f32>) {
-        let common = self.common.borrow();
-        let Some(dir) = common.dir else { return };
+        let EmitterData { dir, azimuth, zenith, .. } = *self.data.borrow();
         tf *= Translation3::new(0.5, 0.5, 0.5) * DIR_ATTS[dir as usize] * DIR_ATTS[0];
-        tf *= UnitQuaternion::from_euler_angles(0., common.azimuth, 0.);
+        tf *= UnitQuaternion::from_euler_angles(0., azimuth, 0.);
         // Legs
         const LEG_LEN: f32 = 0.3;
         const LEG_DIA: f32 = 0.05;
@@ -213,7 +251,7 @@ impl Tile for Emitter {
         // Cylinder (r, h, v)
         const CONTOUR: [(f32, f32, f32); 4] = [(1., 0., 0.), (1., 1., 1.), (0.9, 1., 0.8), (0.6, 0.8, 0.6)];
         const N_SEGS: usize = 8;
-        tf *= UnitQuaternion::from_euler_angles(common.zenith, 0., 0.);
+        tf *= UnitQuaternion::from_euler_angles(zenith, 0., 0.);
         let base = vector![RADIUS, libm::tanf(PI / N_SEGS as f32) * RADIUS];
         let bot_y = LEG_LEN - 0.5;
         let bot_q = tf * point![0., bot_y, 0.];
@@ -273,8 +311,7 @@ impl TileSupplier for EmitterSupplier {
         let emitter = Arc::new(Emitter {
             tier: defs.block.read(&lk, block.borrow()).tier,
             energy_cap: defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap(),
-            common: <_>::default(),
-            server: <_>::default(),
+            data: <_>::default(),
             beam_id: None.into(),
             stats: <_>::default(),
         });
@@ -291,7 +328,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
     let tile = BorrowedRef::new(jni, &tile);
     let level = BorrowedRef::new(jni, &level);
     let tile = lk.read_tile::<Emitter>(tile);
-    let volts = tile.volts(&*lk.tiers.borrow()).min(tile.server.borrow().energy);
+    let volts = tile.volts(&*lk.tiers.borrow()).min(tile.data.borrow().energy);
     let mut active = false;
     if let Some(beam_id) = tile.beam_id.get() {
         let mut srv_guard = lk.server_state.borrow_mut();
@@ -306,6 +343,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
         let hit = beam.hit;
         drop(srv_guard); // accept_eu may call something that reenters beam related functions.
         'fail: {
+            let false = tile.data.borrow().disable_transfer else { break 'fail };
             let Some((pos, dir)) = hit else { break 'fail };
             let true = volts > 0 else { break 'fail };
             let Some(chunk) = level.level_get_chunk_source().loaded_chunk_at(block_to_chunk(pos)) else { break 'fail };
@@ -330,13 +368,11 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
             beam.broadcast_set_beam(jni, beam_id)
         }
     }
-    let mut state = tile.server.borrow_mut();
-    if active || state.energy > 0 {
-        state.energy -= if active { volts } else { 1 }; // TODO: configurable quiescent draw
+    let mut data = tile.data.borrow_mut();
+    if active || data.energy > 0 {
+        data.energy -= if active { volts } else { 1 }; // TODO: configurable quiescent draw
         if tile.beam_id.get().is_none() {
-            if let Some(dir) = tile.compute_dir() {
-                tile.beam_id.set(Some(add_beam(&lk, &level, tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), dir)))
-            }
+            tile.beam_id.set(Some(add_beam(&lk, &level, tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), data.compute_dir())))
         }
     } else if let Some(beam_id) = tile.beam_id.take() {
         del_beam(jni, &lk, beam_id)
@@ -368,8 +404,8 @@ fn get_shape(jni: &JNI, _this: usize, _state: usize, level: usize, pos: usize, _
     let defs = lk.emitter_blocks.get().unwrap();
     // Rethrow is needed for lithium's SingleBlockBlockView.
     match BorrowedRef::new(jni, &level).call_object_method(mv.block_getter_get_tile, &[pos]) {
-        Ok(Some(tile)) => lk.read_tile::<Emitter>(tile.borrow()).common.borrow().dir.map_or(defs.shape_fallback.raw, |i| defs.shapes[i as usize].raw),
-        Ok(None) => defs.shape_fallback.raw,
+        Ok(Some(tile)) => defs.shapes[lk.read_tile::<Emitter>(tile.borrow()).data.borrow().dir as usize].raw,
+        Ok(None) => defs.shapes[0].raw,
         Err(JVMError::Throwable(e)) => e.throw().map(|_| 0).unwrap(),
         Err(e) => panic!("{e}"),
     }
@@ -408,7 +444,7 @@ fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: us
     let item = tiers[lk.read_tile::<Emitter>(tile.borrow()).tier as usize].emitter_item.get().unwrap().with_jni(jni);
     let title = item.call_nonvirtual_object_method(mv.item.raw, mv.item_get_desc_id, &[]).unwrap().unwrap();
     let data = postcard::to_allocvec(&pos.read_vec3i()).unwrap();
-    let menu = EmitterMenu { tile: tile.new_weak_global_ref().unwrap(), dragged: false.into(), view_tf: <_>::default() };
+    let menu = EmitterMenu::new_server(tile.new_weak_global_ref().unwrap());
     gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(menu), &title, data);
     mv.interaction_result_consume.raw
 }
@@ -424,7 +460,7 @@ fn energy_container_tile<'a>(lk: &GlobalMtx, this: BorrowedRef<'a, '_>) -> Local
 #[dyn_abi]
 fn get_eu_stored(jni: &JNI, this: usize) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
-    let result = lk.read_tile::<Emitter>(energy_container_tile(&lk, BorrowedRef::new(jni, &this)).borrow()).server.borrow().energy;
+    let result = lk.read_tile::<Emitter>(energy_container_tile(&lk, BorrowedRef::new(jni, &this)).borrow()).data.borrow().energy;
     result
 }
 
@@ -447,7 +483,7 @@ fn can_input_eu_from_side(jni: &JNI, this: usize, in_side: usize) -> bool {
     let lk = objs().mtx.lock(jni).unwrap();
     let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
     let emitter = lk.read_tile::<Emitter>(tile.borrow());
-    let result = Some(BorrowedRef::new(jni, &in_side).read_dir() ^ 1) == emitter.common.borrow().dir;
+    let result = BorrowedRef::new(jni, &in_side).read_dir() ^ 1 == emitter.data.borrow().dir;
     result
 }
 
@@ -460,7 +496,7 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
     let lk = mtx.lock(jni).unwrap();
     let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
     let emitter = lk.read_tile::<Emitter>(tile.borrow());
-    if in_side != 0 && Some(BorrowedRef::new(jni, &in_side).read_dir() ^ 1) != emitter.common.borrow().dir {
+    if in_side != 0 && BorrowedRef::new(jni, &in_side).read_dir() ^ 1 != emitter.data.borrow().dir {
         return 0;
     }
     let tiers = lk.tiers.borrow();
@@ -470,7 +506,7 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
         // TODO: smoke particle
         return 1;
     }
-    let mut data = emitter.server.borrow_mut();
+    let mut data = emitter.data.borrow_mut();
     if data.energy + volts > emitter.eu_capacity(&tiers) {
         return 0;
     }
@@ -484,7 +520,7 @@ fn change_eu(jni: &JNI, this: usize, delta: i64) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
     let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
     let emitter = lk.read_tile::<Emitter>(tile.borrow());
-    let mut data = emitter.server.borrow_mut();
+    let mut data = emitter.data.borrow_mut();
     let old = data.energy;
     data.energy = (old + delta).clamp(0, emitter.eu_capacity(&lk.tiers.borrow()));
     data.energy - old

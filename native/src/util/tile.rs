@@ -1,22 +1,23 @@
 use super::{
     cleaner::Cleanable,
     client::SolidRenderer,
+    geometry::GeomExt,
     mapping::{ForgeMN, CN, MN},
-    nbt::{new_compound, NBTExt, KEY_COMMON, KEY_SERVER},
+    nbt::{new_compound, NBTExt, KEY_SAVE, KEY_SYNC},
     ClassBuilder, ClassNamer, FatWrapper,
 };
 use crate::{
     asm::*,
-    global::{GlobalMtx, GlobalObjs},
+    global::{warn, GlobalMtx, GlobalObjs},
     jvm::*,
-    mapping_base::{cs, CSig, MSig},
+    mapping_base::*,
     objs,
 };
 use alloc::{format, sync::Arc, vec::Vec};
+use anyhow::Result;
 use core::any::Any;
 use macros::dyn_abi;
 use nalgebra::{Affine3, Point2};
-use postcard::{de_flavors::Slice, Deserializer, Result};
 
 impl<'a, T: JRef<'a>> TileExt<'a> for T {}
 pub trait TileExt<'a>: JRef<'a> {
@@ -52,10 +53,10 @@ pub trait TileSupplier: Send {
 
 pub trait Tile: Cleanable {
     fn any(&self) -> &dyn Any;
-    fn save_common(&self) -> Vec<u8>;
-    fn save_server(&self) -> Vec<u8>;
-    fn load_common<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()>;
-    fn load_server<'a>(&self, de: &mut Deserializer<'a, Slice<'a>>) -> Result<()>;
+    fn encode_save(&self) -> Vec<u8>;
+    fn encode_sync(&self) -> Vec<u8>;
+    fn decode_save(&self, bytes: &[u8]) -> Result<()>;
+    fn decode_sync(&self, bytes: &[u8]) -> Result<()>;
     fn get_cap(&self, cap: BorrowedRef) -> Option<usize>;
     fn invalidate_caps(&self, jni: &JNI, lk: &GlobalMtx);
     fn render(&self, lk: &GlobalMtx, sr: SolidRenderer, tf: Affine3<f32>);
@@ -125,7 +126,7 @@ fn get_update_tag(jni: &JNI, tile: usize) -> usize {
     let lk = objs().mtx.lock(jni).unwrap();
     let tile = objs().tile_defs.tile.read(&lk, BorrowedRef::new(jni, &tile));
     let tag = new_compound(jni);
-    tag.compound_put_byte_array(KEY_COMMON, &tile.save_common());
+    tag.compound_put_byte_array(KEY_SYNC, &tile.encode_sync());
     tag.into_raw()
 }
 
@@ -135,35 +136,31 @@ fn save_additional(jni: &JNI, tile: usize, tag: usize) {
     let tag = BorrowedRef::new(jni, &tag);
     let tile = BorrowedRef::new(jni, &tile);
     tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[tag.raw]).unwrap();
-    let lk = mtx.lock(jni).unwrap();
-    let tile = tile_defs.tile.read(&lk, tile);
-    tag.compound_put_byte_array(KEY_COMMON, &tile.save_common());
-    tag.compound_put_byte_array(KEY_SERVER, &tile.save_server());
+    tag.compound_put_byte_array(KEY_SAVE, &tile_defs.tile.read(&mtx.lock(jni).unwrap(), tile).encode_save());
 }
 
 #[dyn_abi]
 fn on_load(jni: &JNI, tile: usize, nbt: usize) {
-    let GlobalObjs { av, mv, tile_defs, mtx, .. } = objs();
-    let tile = BorrowedRef::new(jni, &tile);
+    let GlobalObjs { mv, tile_defs, mtx, .. } = objs();
+    let j_tile = BorrowedRef::new(jni, &tile);
     let tag = BorrowedRef::new(jni, &nbt);
-    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[tag.raw]).unwrap();
+    j_tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[tag.raw]).unwrap();
     let lk = mtx.lock(jni).unwrap();
-    let tile = tile_defs.tile.read(&lk, tile);
-    let result: Result<()> = try {
-        let mut data = tag.compound_get_byte_array(KEY_COMMON);
-        let mut buf = data.crit_elems().unwrap();
-        if !buf.is_empty() {
-            tile.load_common(&mut Deserializer::from_bytes(&*buf))?
-        }
-        drop(buf);
-        data = tag.compound_get_byte_array(KEY_SERVER);
-        buf = data.crit_elems().unwrap();
-        if !buf.is_empty() {
-            tile.load_server(&mut Deserializer::from_bytes(&*buf))?
-        }
-    };
-    let Err(e) = result else { return };
-    av.jv.runtime_exception.with_jni(jni).throw_new(&cs(format!("{e}"))).unwrap()
+    let tile = tile_defs.tile.read(&lk, j_tile);
+    let mut data = tag.compound_get_byte_array(KEY_SYNC);
+    let mut buf = data.crit_elems().unwrap();
+    let result = (!buf.is_empty()).then(|| tile.decode_sync(&*buf));
+    drop(buf);
+    if let Some(Err(e)) = result {
+        warn(jni, &cs(format!("Failed to load sync data for tile at {}: {e:?}", j_tile.tile_pos().read_vec3i())))
+    }
+    data = tag.compound_get_byte_array(KEY_SAVE);
+    buf = data.crit_elems().unwrap();
+    let result = (!buf.is_empty()).then(|| tile.decode_save(&*buf));
+    drop(buf);
+    if let Some(Err(e)) = result {
+        warn(jni, &cs(format!("Failed to load save data for tile at {}: {e:?}", j_tile.tile_pos().read_vec3i())))
+    }
 }
 
 #[dyn_abi]

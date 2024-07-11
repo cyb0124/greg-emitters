@@ -74,7 +74,7 @@ fn place_block(jni: &'static JNI, this: usize, ctx: usize, state: usize) -> bool
     let dir = dir_obj.read_dir();
     let tile = level.tile_at(&pos).unwrap();
     let lk = mtx.lock(jni).unwrap();
-    lk.read_tile::<Emitter>(tile.borrow()).common.borrow_mut().dir = Some(dir);
+    lk.read_tile::<Emitter>(tile.borrow()).data.borrow_mut().dir = dir;
     let opp = dir ^ 1;
     pos = write_block_pos(jni, pos.read_vec3i() + DIR_STEPS[opp as usize]);
     let pipe_block = level.block_state_at(&pos).block_state_get_block();

@@ -72,6 +72,7 @@ impl Rect {
     pub fn left_center(&self) -> Point2<f32> { point!(self.min.x, self.center().y) }
     pub fn right_center(&self) -> Point2<f32> { point!(self.max.x, self.center().y) }
     pub fn contains(&self, p: Point2<f32>) -> bool { self.min.x <= p.x && p.x <= self.max.x && self.min.y <= p.y && p.y <= self.max.y }
+    pub fn from_center_size(center: Point2<f32>, size: Vector2<f32>) -> Self { Self { min: center - size * 0.5, max: center + size * 0.5 } }
 }
 
 pub struct CoveringBlocks {

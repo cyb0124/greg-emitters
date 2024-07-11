@@ -5,9 +5,9 @@ use crate::{
     global::GlobalMtx,
     jvm::*,
     objs,
-    util::{gui::GUIExt, tile::TileExt},
+    util::{gui::GUIExt, strict_deserialize, tile::TileExt},
 };
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use core::{
     f32::consts::{FRAC_PI_2, TAU},
     num::NonZeroUsize,
@@ -16,8 +16,15 @@ use num_traits::Euclid;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-pub enum C2S {
-    SetEmitterAttitude { menu_id: i32, zenith: f32, azimuth: f32 },
+pub enum EmitterAction {
+    SetAttitude { zenith: f32, azimuth: f32 },
+    SetDisableTransfer(bool),
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct C2S {
+    pub menu_id: i32,
+    pub action: EmitterAction,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -27,7 +34,7 @@ pub enum S2C {
 }
 
 pub fn handle_s2c(lk: &GlobalMtx, data: &[u8]) -> Result<()> {
-    let data: S2C = postcard::from_bytes(data).map_err(|e| anyhow!("{e}"))?;
+    let data: S2C = strict_deserialize(data)?;
     Ok(match data {
         S2C::SetBeam { id, data } => {
             lk.client_state.borrow_mut().beams.insert(id, data);
@@ -40,26 +47,24 @@ pub fn handle_s2c(lk: &GlobalMtx, data: &[u8]) -> Result<()> {
 
 pub fn handle_c2s(lk: &GlobalMtx, data: &[u8], player: BorrowedRef<'static, '_>) -> Result<()> {
     let gui_defs = &objs().gui_defs;
-    let data: C2S = postcard::from_bytes(data).map_err(|e| anyhow!("{e}"))?;
-    Ok(match data {
-        C2S::SetEmitterAttitude { menu_id, zenith, azimuth } => {
-            let menu = player.player_container_menu().context("no menu")?;
-            ensure!(menu.menu_id() == menu_id);
-            ensure!(menu.is_instance_of(gui_defs.menu.cls.cls.raw));
-            let menu: &EmitterMenu = gui_defs.menu.read(lk, menu.borrow()).any().downcast_ref().context("wrong menu")?;
-            let j_tile = menu.tile.with_jni(player.jni).new_local_ref()?;
-            let level = j_tile.tile_level().context("dead tile")?;
-            let tile = lk.read_tile::<Emitter>(j_tile.borrow());
-            let mut common = tile.common.borrow_mut();
-            common.zenith = if zenith.is_finite() { zenith.clamp(0., FRAC_PI_2) } else { 0. };
-            common.azimuth = if azimuth.is_finite() { azimuth.rem_euclid(&TAU) } else { 0. };
-            drop(common);
-            if let Some(beam_id) = tile.beam_id.get() {
-                if let Some(dir) = tile.compute_dir() {
-                    set_beam_dir(lk, level.jni, beam_id, dir)
-                }
+    let C2S { menu_id, action } = strict_deserialize(data)?;
+    let menu = player.player_container_menu().context("no menu")?;
+    ensure!(menu.menu_id() == menu_id);
+    ensure!(menu.is_instance_of(gui_defs.menu.cls.cls.raw));
+    let menu: &EmitterMenu = gui_defs.menu.read(lk, menu.borrow()).any().downcast_ref().context("wrong menu")?;
+    let tile = menu.tile.with_jni(player.jni).new_local_ref()?;
+    let level = tile.tile_level().context("dead tile")?;
+    let emitter = lk.read_tile::<Emitter>(tile.borrow());
+    let mut data = emitter.data.borrow_mut();
+    match action {
+        EmitterAction::SetAttitude { zenith, azimuth } => {
+            data.zenith = if zenith.is_finite() { zenith.clamp(0., FRAC_PI_2) } else { 0. };
+            data.azimuth = if azimuth.is_finite() { azimuth.rem_euclid(&TAU) } else { 0. };
+            if let Some(beam_id) = emitter.beam_id.get() {
+                set_beam_dir(lk, level.jni, beam_id, data.compute_dir())
             }
-            level.level_mark_for_broadcast(&j_tile.tile_pos())
         }
-    })
+        EmitterAction::SetDisableTransfer(x) => data.disable_transfer = x,
+    }
+    Ok(level.level_mark_for_broadcast(&tile.tile_pos()))
 }

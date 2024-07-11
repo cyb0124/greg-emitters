@@ -1,8 +1,8 @@
 use crate::{jvm::*, objs};
 use core::ffi::CStr;
 
-pub const KEY_COMMON: &CStr = c"c";
-pub const KEY_SERVER: &CStr = c"s";
+pub const KEY_SYNC: &CStr = c"c";
+pub const KEY_SAVE: &CStr = c"s";
 
 impl<'a, T: JRef<'a>> NBTExt<'a> for T {}
 pub trait NBTExt<'a>: JRef<'a> {
