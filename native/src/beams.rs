@@ -273,7 +273,7 @@ pub fn on_chunk_unwatch<'a>(player: &impl JRef<'a>, pos: Point2<i32>) {
     let mut srv = lk.server_state.borrow_mut();
     let srv = &mut *srv;
     let p_hash = ti().id_hash(player.raw()).unwrap();
-    let mut p_entry = srv.players.find_entry(p_hash as _, |x| player.is_same_object(x.player.0.raw)).ok().unwrap();
+    let Ok(mut p_entry) = srv.players.find_entry(p_hash as _, |x| player.is_same_object(x.player.0.raw)) else { return };
     let p_state = p_entry.get_mut();
     let level = p_state.level.0.with_jni(player.jni()).new_local_ref().unwrap();
     let l_hash = p_state.level.1;
