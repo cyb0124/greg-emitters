@@ -12,7 +12,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use core::{f32::consts::TAU, mem::take, num::NonZeroUsize};
-use hashbrown::{hash_map, hash_table, HashMap, HashSet, HashTable};
+use hashbrown::{hash_map, hash_set, hash_table, HashMap, HashSet, HashTable};
 use nalgebra::{Point2, Point3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -258,12 +258,13 @@ pub fn on_chunk_watch(player: &impl JRef<'static>, level: &impl JRef<'static>, p
         beams: HashMap::new(),
     });
     let p_state = p_entry.into_mut();
-    p_state.chunks.insert(pos);
-    for &id in &chunk.beams {
-        if p_state.incr_beam(id) {
-            let beam = srv.beams.get_mut(&id).unwrap();
-            BeamState::add_player(&mut beam.players, player, p_hash);
-            beam.send_set_beam(id, player)
+    if p_state.chunks.insert(pos) {
+        for &id in &chunk.beams {
+            if p_state.incr_beam(id) {
+                let beam = srv.beams.get_mut(&id).unwrap();
+                BeamState::add_player(&mut beam.players, player, p_hash);
+                beam.send_set_beam(id, player)
+            }
         }
     }
 }
@@ -275,10 +276,12 @@ pub fn on_chunk_unwatch<'a>(player: &impl JRef<'a>, pos: Point2<i32>) {
     let p_hash = ti().id_hash(player.raw()).unwrap();
     let Ok(mut p_entry) = srv.players.find_entry(p_hash as _, |x| player.is_same_object(x.player.0.raw)) else { return };
     let p_state = p_entry.get_mut();
+    let hash_set::Entry::Occupied(c_entry) = p_state.chunks.entry(pos) else { return };
+    c_entry.remove();
     let level = p_state.level.0.with_jni(player.jni()).new_local_ref().unwrap();
     let l_hash = p_state.level.1;
     let mut d_entry = srv.dims.find_entry(l_hash as _, |x| level.is_same_object(x.level.0.raw)).ok().unwrap();
-    let hash_map::Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { return };
+    let hash_map::Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { unreachable!() };
     let c_state = c_entry.get_mut();
     for &id in &c_state.beams {
         if p_state.decr_beam(id) {
@@ -289,7 +292,6 @@ pub fn on_chunk_unwatch<'a>(player: &impl JRef<'a>, pos: Point2<i32>) {
     c_state.players.find_entry(p_hash as _, |x| player.is_same_object(x.0.raw)).ok().unwrap().remove().0 .0.replace_jni(level.jni);
     del_chunk_if_empty(c_entry);
     del_dim_if_empty(level.jni, d_entry);
-    p_state.chunks.remove(&pos);
     if p_state.chunks.is_empty() {
         // beams should also be empty here.
         let (state, _) = p_entry.remove();
