@@ -121,7 +121,7 @@ impl<T: ?Sized + Send + 'static> FatWrapper<T> {
     // Borrow GlobalMtx to ensure lock is held.
     pub fn read<'a>(&self, _: &'a GlobalMtx, obj: BorrowedRef<'_, 'a>) -> &'a T {
         let [ptr, meta] = self.cls.read(&obj);
-        unsafe { &*core::ptr::from_raw_parts(ptr as _, transmute_copy(&meta)) }
+        unsafe { &*core::ptr::from_raw_parts(ptr as *const (), transmute_copy(&meta)) }
     }
 }
 

@@ -37,6 +37,6 @@ impl Cleaner {
 #[dyn_abi]
 fn task_run(jni: &JNI, task: usize) {
     let [ptr, meta] = objs().cleaner.task.read(&BorrowedRef::new(jni, &task));
-    let data: *const dyn Cleanable = core::ptr::from_raw_parts(ptr as _, unsafe { transmute(meta) });
+    let data: *const dyn Cleanable = core::ptr::from_raw_parts(ptr as *const (), unsafe { transmute(meta) });
     unsafe { Arc::from_raw(data) }.free(jni)
 }

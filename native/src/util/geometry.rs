@@ -76,14 +76,14 @@ impl Rect {
 }
 
 pub struct CoveringBlocks {
-    dir: UnitVector3<f32>,
-    inv_dir: Vector3<f32>,
+    pub dir: UnitVector3<f64>,
+    inv_dir: Vector3<f64>,
     pub pos: Point3<i32>,
-    pub frac: Vector3<f32>,
+    pub frac: Vector3<f64>,
 }
 
 impl CoveringBlocks {
-    pub fn new(pos: Point3<i32>, frac: Vector3<f32>, dir: UnitVector3<f32>) -> Self { Self { dir, inv_dir: dir.map(|x| x.abs().recip()), pos, frac } }
+    pub fn new(pos: Point3<i32>, frac: Vector3<f64>, dir: UnitVector3<f64>) -> Self { Self { dir, inv_dir: dir.map(|x| x.abs().recip()), pos, frac } }
     pub fn step(&mut self) {
         let cost = self.frac.zip_map(&self.dir, |x, d| if d < 0. { x } else { 1. - x }).component_mul(&self.inv_dir);
         let (axis, cost) = cost.argmin();

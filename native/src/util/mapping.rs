@@ -788,9 +788,9 @@ impl MN<MSig> {
             vec3i_y: MSig { owner: cn.vec3i.clone(), name: cs("f_123286_"), sig: cs("I") },
             vec3i_z: MSig { owner: cn.vec3i.clone(), name: cs("f_123289_"), sig: cs("I") },
             vec3d_init: MSig { owner: cn.vec3d.clone(), name: cs("<init>"), sig: cs("(DDD)V") },
-            vec3d_x: MSig { owner: cn.vec3i.clone(), name: cs("f_82479_"), sig: cs("D") },
-            vec3d_y: MSig { owner: cn.vec3i.clone(), name: cs("f_82480_"), sig: cs("D") },
-            vec3d_z: MSig { owner: cn.vec3i.clone(), name: cs("f_82481_"), sig: cs("D") },
+            vec3d_x: MSig { owner: cn.vec3d.clone(), name: cs("f_82479_"), sig: cs("D") },
+            vec3d_y: MSig { owner: cn.vec3d.clone(), name: cs("f_82480_"), sig: cs("D") },
+            vec3d_z: MSig { owner: cn.vec3d.clone(), name: cs("f_82481_"), sig: cs("D") },
             block_pos_init: MSig { owner: cn.block_pos.clone(), name: cs("<init>"), sig: cs("(III)V") },
             block_state_get_block: MSig { owner: cn.block_state.clone(), name: cs("m_60734_"), sig: msig([], cn.block.sig.to_bytes()) },
             block_state_get_visual_shape: MSig {

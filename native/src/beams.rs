@@ -21,7 +21,7 @@ pub struct ClientBeam {
     tier: u8,
     active: bool,
     src: Point3<i32>,
-    dst: Point3<f32>,
+    dst: Point3<f64>,
 }
 
 #[derive(Default)]
@@ -44,7 +44,7 @@ pub struct BeamState {
     tier: u8,
     src: Point3<i32>,
     dir: UnitVector3<f32>,
-    dst: Point3<f32>,
+    dst: Point3<f64>,
     pub hit: Option<(Point3<i32>, u8)>,
     pub active: bool,
     pub dirty: bool,
@@ -186,7 +186,7 @@ impl BeamState {
             dim.untrack_block(pos, id)
         }
         self.chunks.insert(block_to_chunk(self.src));
-        let mut covering = CoveringBlocks::new(self.src, Vector3::from_element(0.5), self.dir);
+        let mut covering = CoveringBlocks::new(self.src, Vector3::from_element(0.5), self.dir.cast());
         let j_src = write_vec3d(jni, covering.pos.cast::<f64>().map(|x| x + 0.5));
         let level = self.level.0.with_jni(jni);
         let chunk_source = level.level_get_chunk_source();
@@ -197,7 +197,7 @@ impl BeamState {
             self.blocks.push(covering.pos);
             dim.track_block(covering.pos, id);
             let Some(Some(chunk)) = (!level.is_outside_build_height(covering.pos.y)).then(|| chunk_source.loaded_chunk_at(chunk)) else {
-                self.dst = covering.pos.cast::<f32>() + covering.frac;
+                self.dst = covering.pos.cast::<f64>() + covering.frac;
                 self.hit = None;
                 break;
             };
@@ -205,7 +205,7 @@ impl BeamState {
             let state = chunk.block_state_at(&pos);
             let args = [chunk.raw, pos.raw, mv.collision_ctx_empty.raw];
             let shape = state.call_object_method(mv.block_state_get_visual_shape, &args).unwrap().unwrap();
-            let j_dst = write_vec3d(jni, (covering.pos.cast::<f32>() + covering.frac + self.dir.into_inner() * 2.).cast());
+            let j_dst = write_vec3d(jni, (covering.pos.cast::<f64>() + covering.frac + *covering.dir * 2.).cast());
             if let Some(hit) = shape.call_object_method(mv.voxel_shape_clip, &[j_src.raw, j_dst.raw, pos.raw]).unwrap() {
                 if !hit.get_bool_field(mv.block_hit_result_miss) {
                     self.dst = hit.get_object_field(mv.block_hit_result_pos).unwrap().read_vec3d().cast();
@@ -370,11 +370,11 @@ pub fn set_beam_dir(lk: &GlobalMtx, jni: &'static JNI, id: NonZeroUsize, dir: Un
 }
 
 impl ClientBeam {
-    pub fn render<'a>(&self, tiers: &[Tier], vb: &impl JRef<'a>, pose: &impl JRef<'a>, camera_pos: Point3<f32>, tick: i32, sub_tick: f32) {
+    pub fn render<'a>(&self, tiers: &[Tier], vb: &impl JRef<'a>, pose: &impl JRef<'a>, camera_pos: Point3<f64>, tick: i32, sub_tick: f32) {
         // TODO: frustum culling
         let mvc = objs().mv.client.uref();
-        let src = self.src.cast::<f32>().map(|x| x + 0.5) - camera_pos;
-        let dst = self.dst - camera_pos;
+        let src = (self.src.cast::<f64>().map(|x| x + 0.5) - camera_pos).cast::<f32>();
+        let dst = (self.dst - camera_pos).cast::<f32>();
         let dir = (dst - src).normalize();
         let mut b = Vector3::zeros();
         b[dir.abs().argmin().0] = 1.;
