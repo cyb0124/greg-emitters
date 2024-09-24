@@ -327,10 +327,10 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
     let lk = mtx.lock(jni).unwrap();
     let tile = BorrowedRef::new(jni, &tile);
     let level = BorrowedRef::new(jni, &level);
-    let tile = lk.read_tile::<Emitter>(tile);
-    let volts = tile.volts(&*lk.tiers.borrow()).min(tile.data.borrow().energy);
+    let emitter = lk.read_tile::<Emitter>(tile);
+    let volts = emitter.volts(&*lk.tiers.borrow()).min(emitter.data.borrow().energy);
     let mut active = false;
-    if let Some(beam_id) = tile.beam_id.get() {
+    if let Some(beam_id) = emitter.beam_id.get() {
         let mut srv_guard = lk.server_state.borrow_mut();
         let srv = &mut *srv_guard;
         let beam = srv.beams.get_mut(&beam_id).unwrap();
@@ -343,7 +343,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
         let hit = beam.hit;
         drop(srv_guard); // accept_eu may call something that reenters beam related functions.
         'fail: {
-            let false = tile.data.borrow().disable_transfer else { break 'fail };
+            let false = emitter.data.borrow().disable_transfer else { break 'fail };
             let Some((pos, dir)) = hit else { break 'fail };
             let true = volts > 0 else { break 'fail };
             let Some(chunk) = level.level_get_chunk_source().loaded_chunk_at(block_to_chunk(pos)) else { break 'fail };
@@ -368,16 +368,17 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
             beam.broadcast_set_beam(jni, beam_id)
         }
     }
-    let mut data = tile.data.borrow_mut();
+    let mut data = emitter.data.borrow_mut();
     if active || data.energy > 0 {
         data.energy -= if active { volts } else { 1 }; // TODO: configurable quiescent draw
-        if tile.beam_id.get().is_none() {
-            tile.beam_id.set(Some(add_beam(&lk, &level, tile.tier, BorrowedRef::new(jni, &pos).read_vec3i(), data.compute_dir())))
+        tile.tile_mark_for_save();
+        if emitter.beam_id.get().is_none() {
+            emitter.beam_id.set(Some(add_beam(&lk, &level, emitter.tier, BorrowedRef::new(jni, &pos).read_vec3i(), data.compute_dir())))
         }
-    } else if let Some(beam_id) = tile.beam_id.take() {
+    } else if let Some(beam_id) = emitter.beam_id.take() {
         del_beam(jni, &lk, beam_id)
     }
-    let mut stats = tile.stats.borrow_mut();
+    let mut stats = emitter.stats.borrow_mut();
     stats.time += 1;
     if stats.time == 20 {
         stats.time = 0;
@@ -489,7 +490,7 @@ fn can_input_eu_from_side(jni: &JNI, this: usize, in_side: usize) -> bool {
 
 #[dyn_abi]
 fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i64 {
-    if amps < 1 {
+    if amps < 1 || volts < 1 {
         return 0;
     }
     let GlobalObjs { mv, mtx, .. } = objs();
@@ -511,19 +512,26 @@ fn accept_eu(jni: &JNI, this: usize, in_side: usize, volts: i64, amps: i64) -> i
         return 0;
     }
     data.energy += volts;
+    tile.tile_mark_for_save();
     emitter.stats.borrow_mut().eu_accepted += volts;
     1
 }
 
 #[dyn_abi]
-fn change_eu(jni: &JNI, this: usize, delta: i64) -> i64 {
+fn change_eu(jni: &JNI, this: usize, mut delta: i64) -> i64 {
     let lk = objs().mtx.lock(jni).unwrap();
     let tile = energy_container_tile(&lk, BorrowedRef::new(jni, &this));
-    let emitter = lk.read_tile::<Emitter>(tile.borrow());
-    let mut data = emitter.data.borrow_mut();
-    let old = data.energy;
-    data.energy = (old + delta).clamp(0, emitter.eu_capacity(&lk.tiers.borrow()));
-    data.energy - old
+    delta = {
+        let emitter = lk.read_tile::<Emitter>(tile.borrow());
+        let mut data = emitter.data.borrow_mut();
+        let old = data.energy;
+        data.energy = (old + delta).clamp(0, emitter.eu_capacity(&lk.tiers.borrow()));
+        data.energy - old
+    };
+    if delta != 0 {
+        tile.tile_mark_for_save()
+    }
+    delta
 }
 
 #[dyn_abi]

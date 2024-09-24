@@ -66,5 +66,6 @@ pub fn handle_c2s(lk: &GlobalMtx, data: &[u8], player: BorrowedRef<'static, '_>)
         }
         EmitterAction::SetDisableTransfer(x) => data.disable_transfer = x,
     }
+    tile.tile_mark_for_save();
     Ok(level.level_mark_for_broadcast(&tile.tile_pos()))
 }
