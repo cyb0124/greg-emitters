@@ -23,6 +23,7 @@ impl<'a, T: JRef<'a>> TileExt<'a> for T {}
 pub trait TileExt<'a>: JRef<'a> {
     fn tile_level(&self) -> Option<LocalRef<'a>> { self.get_object_field(objs().mv.tile_level) }
     fn tile_pos(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.tile_pos).unwrap() }
+    fn tile_mark_for_save(&self) { self.call_void_method(objs().mv.tile_set_changed, &[]).unwrap() }
     fn block_state_get_block(&self) -> LocalRef<'a> { self.call_object_method(objs().mv.block_state_get_block, &[]).unwrap().unwrap() }
     fn block_state_at(&self, pos: &impl JRef<'a>) -> LocalRef<'a> {
         self.call_object_method(objs().mv.block_getter_get_block_state, &[pos.raw()]).unwrap().unwrap()
