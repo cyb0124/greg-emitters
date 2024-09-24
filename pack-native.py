@@ -1,6 +1,6 @@
 import os
 
-OUT_DIRS = ['forge-1.20.1/src/generated/resources/']
+OUT_DIRS = ['neoforge-1.21/src/generated/resources/']
 ARCHS = ['x64', 'aarch64']
 
 def find_symbol(linker_map, name):

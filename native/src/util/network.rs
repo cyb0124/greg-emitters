@@ -1,103 +1,99 @@
 use super::{
     cleaner::Cleanable,
-    mapping::{ForgeMV, MV},
-    serialize_to_byte_array, ClassBuilder, ClassNamer, ThinWrapper,
+    mapping::{ForgeCN, ForgeMN, CN, MN, MV},
+    ClassBuilder, ClassNamer, ThinWrapper,
 };
 use crate::{
     asm::*,
     global::{warn, GlobalObjs},
     jvm::*,
-    mapping_base::cs,
+    mapping_base::{cs, CSig, MSig},
     objs,
     packets::{handle_c2s, handle_s2c},
-    registry::{MOD_ID, PROTOCOL_VERSION},
+    registry::MOD_ID,
 };
-use alloc::{format, sync::Arc};
+use alloc::{format, sync::Arc, vec::Vec};
 use bstr::BStr;
 use macros::dyn_abi;
 use serde::Serialize;
 
 pub struct NetworkDefs {
-    channel: GlobalRef<'static>,
-    task: ThinWrapper<Task>,
+    pub payload_type: GlobalRef<'static>,
+    payload: ThinWrapper<Payload>,
+    empty_payload_array: GlobalRef<'static>,
+    pub stream_codec: GlobalRef<'static>,
+    pub payload_handler: GlobalRef<'static>,
 }
 
-struct Task {
-    msg: GlobalRef<'static>,
-    ctx: GlobalRef<'static>,
-}
-
-impl Cleanable for Task {
-    fn free(self: Arc<Self>, jni: &JNI) {
-        let Task { msg, ctx } = Arc::into_inner(self).unwrap();
-        msg.replace_jni(jni);
-        ctx.replace_jni(jni);
-    }
+struct Payload(Vec<u8>);
+impl Cleanable for Payload {
+    fn free(self: Arc<Self>, _: &JNI) {}
 }
 
 impl NetworkDefs {
-    pub fn init(av: &AV<'static>, namer: &ClassNamer, mv: &MV, fmv: &ForgeMV) -> Self {
+    pub fn init(av: &AV<'static>, namer: &ClassNamer, cn: &CN<Arc<CSig>>, mn: &MN<MSig>, mv: &MV, fcn: &ForgeCN<Arc<CSig>>, fmn: &ForgeMN) -> Self {
         let ns = av.ldr.jni.new_utf(&cs(MOD_ID)).unwrap();
         let mut id = av.ldr.jni.new_utf(c"main").unwrap();
         id = mv.resource_loc.new_object(mv.resource_loc_init, &[ns.raw, id.raw]).unwrap();
-        let version_supplier = ClassBuilder::new_1(av, namer, c"java/lang/Object")
-            .interfaces([
-                c"java/util/function/Supplier",
-                c"java/util/function/Predicate",
-                c"java/util/function/BiConsumer",
-                c"java/util/function/Function",
-            ])
-            .native_1(c"get", c"()Ljava/lang/Object;", get_version_dyn())
-            .native_1(c"test", c"(Ljava/lang/Object;)Z", check_version_dyn())
-            .native_1(c"accept", c"(Ljava/lang/Object;Ljava/lang/Object;)V", encode_msg_dyn())
-            .native_1(c"apply", c"(Ljava/lang/Object;)Ljava/lang/Object;", decode_msg_dyn())
-            .define_empty();
-        let v_inst = version_supplier.alloc_object().unwrap();
-        let args = [id.raw, v_inst.raw, v_inst.raw, v_inst.raw];
-        let channel = fmv.network_reg.call_static_object_method(fmv.network_reg_new_simple_channel, &args);
-        let channel = channel.unwrap().unwrap().new_global_ref().unwrap();
-        let packet_handler = ClassBuilder::new_1(av, namer, c"java/lang/Object")
-            .interfaces([c"java/util/function/BiConsumer"])
-            .native_1(c"accept", c"(Ljava/lang/Object;Ljava/lang/Object;)V", handle_msg_dyn())
-            .define_empty();
-        let h_inst = packet_handler.alloc_object().unwrap();
-        let msg_type = av.ldr.jni.new_byte_array(0).unwrap().get_object_class();
-        channel.call_object_method(fmv.simple_channel_reg_msg, &[0, msg_type.raw, v_inst.raw, v_inst.raw, h_inst.raw]).unwrap();
-        let task = ClassBuilder::new_1(av, namer, c"java/lang/Object")
-            .interfaces([c"java/lang/Runnable"])
-            .native_1(c"run", c"()V", task_run_dyn())
+        let payload_type = mv.custom_payload_type.new_object(mv.custom_payload_type_init, &[id.raw]).unwrap().new_global_ref().unwrap();
+
+        let payload = ClassBuilder::new_1(av, namer, c"java/lang/Object")
+            .interfaces([&*cn.custom_payload.slash])
+            .native_2(&mn.custom_payload_type, payload_type_dyn())
             .define_thin()
-            .wrap::<Task>();
-        Self { channel, task }
+            .wrap::<Payload>();
+
+        let stream_codec = ClassBuilder::new_1(av, namer, c"java/lang/Object")
+            .interfaces([&*cn.stream_codec.slash])
+            .native_2(&mn.stream_codec_encode, encode_dyn())
+            .native_2(&mn.stream_codec_decode, decode_dyn())
+            .define_empty();
+
+        let payload_handler = ClassBuilder::new_1(av, namer, c"java/lang/Object")
+            .interfaces([&*fcn.payload_handler.slash])
+            .native_2(&fmn.handle_payload, handle_payload_dyn())
+            .define_empty();
+
+        Self {
+            payload_type,
+            empty_payload_array: payload.cls.cls.new_object_array(0, 0).unwrap().new_global_ref().unwrap(),
+            payload,
+            stream_codec: stream_codec.alloc_object().unwrap().new_global_ref().unwrap(),
+            payload_handler: payload_handler.alloc_object().unwrap().new_global_ref().unwrap(),
+        }
     }
 
     pub fn send_c2s(&self, jni: &JNI, data: &impl Serialize) {
-        self.channel.with_jni(jni).call_void_method(objs().fmv.simple_channel_send_to_server, &[serialize_to_byte_array(jni, data).raw]).unwrap()
+        let fmv = &objs().fmv;
+        let data = self.payload.new_obj(jni, Payload(postcard::to_allocvec(data).unwrap()).into());
+        fmv.pkt_distributor.with_jni(jni).call_static_void_method(fmv.send_c2s, &[data.raw, self.empty_payload_array.raw]).unwrap()
     }
 
     pub fn send_s2c<'a>(&self, player: &impl JRef<'a>, data: &impl Serialize) {
-        let GlobalObjs { mv, fmv, .. } = objs();
-        let conn = player.get_object_field(mv.server_player_pkt_listener).unwrap().get_object_field(mv.server_pkt_listener_impl_conn).unwrap();
-        let ba = serialize_to_byte_array(conn.jni, data);
-        self.channel.with_jni(conn.jni).call_void_method(fmv.simple_channel_send_to, &[ba.raw, conn.raw, fmv.network_dir_s2c.raw]).unwrap()
+        let fmv = &objs().fmv;
+        let jni = player.jni();
+        let data = self.payload.new_obj(jni, Payload(postcard::to_allocvec(data).unwrap()).into());
+        fmv.pkt_distributor.with_jni(jni).call_static_void_method(fmv.send_s2c, &[player.raw(), data.raw, self.empty_payload_array.raw]).unwrap()
     }
 }
 
 #[dyn_abi]
-fn get_version(jni: &JNI, _this: usize) -> usize { jni.new_utf(PROTOCOL_VERSION).unwrap().into_raw() }
+fn payload_type(_: &JNI, _this: usize) -> usize { objs().net_defs.payload_type.raw }
 
 #[dyn_abi]
-fn check_version(jni: &JNI, _this: usize, version: usize) -> bool { jni.new_utf(PROTOCOL_VERSION).unwrap().equals(&objs().av.jv, version).unwrap() }
-
-#[dyn_abi]
-fn encode_msg(jni: &JNI, _: usize, msg: usize, buf: usize) {
-    BorrowedRef::new(jni, &buf).call_void_method(objs().mv.friendly_byte_buf_write_byte_array, &[msg]).unwrap()
+fn encode(jni: &JNI, _: usize, buf: usize, msg: usize) {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let data = &*objs().net_defs.payload.read(&*lk, BorrowedRef::new(jni, &msg)).0;
+    let ba = jni.new_byte_array(data.len() as _).unwrap();
+    ba.write_byte_array(data, 0).unwrap();
+    drop(lk);
+    BorrowedRef::new(jni, &buf).call_void_method(objs().mv.friendly_byte_buf_write_byte_array, &[ba.raw]).unwrap()
 }
 
 #[dyn_abi]
-fn decode_msg(jni: &JNI, _: usize, buf: usize) -> usize {
+fn decode(jni: &JNI, _: usize, buf: usize) -> usize {
     match BorrowedRef::new(jni, &buf).call_object_method(objs().mv.friendly_byte_buf_read_byte_array, &[]).and_then(|x| x.expect_some()) {
-        Ok(x) => x.into_raw(),
+        Ok(x) => objs().net_defs.payload.new_obj(jni, Payload(x.byte_elems().unwrap().to_vec()).into()).into_raw(),
         Err(JVMError::Throwable(e)) => {
             e.throw().unwrap();
             0
@@ -107,34 +103,21 @@ fn decode_msg(jni: &JNI, _: usize, buf: usize) -> usize {
 }
 
 #[dyn_abi]
-fn task_run(jni: &'static JNI, this: usize) {
+fn handle_payload(jni: &'static JNI, _this: usize, payload: usize, ctx: usize) {
     let GlobalObjs { mtx, fmv, mv, net_defs, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
-    let task = net_defs.task.read(&lk, BorrowedRef::new(jni, &this));
-    let msg = task.msg.with_jni(jni);
-    let ctx = task.ctx.with_jni(jni);
-    let msg = msg.byte_elems().unwrap();
-    let dir = ctx.call_object_method(fmv.network_ctx_get_dir, &[]).unwrap().unwrap();
-    if dir.is_same_object(fmv.network_dir_c2s.raw) {
-        let Some(player) = ctx.call_object_method(fmv.network_ctx_get_sender, &[]).unwrap() else { return };
-        if let Err(e) = handle_c2s(&lk, &*msg, player.borrow()) {
+    let data = &*net_defs.payload.read(&*lk, BorrowedRef::new(jni, &payload)).0;
+    let ctx = BorrowedRef::new(jni, &ctx);
+    if ctx.call_object_method(fmv.payload_ctx_flow, &[]).unwrap().unwrap().call_bool_method(fmv.pkt_flow_is_s2c, &[]).unwrap() {
+        if let Err(e) = handle_s2c(&*lk, data) {
+            warn(jni, &cs(format!("Failed to handle packet from server: {e:?}")))
+        }
+    } else {
+        let player = ctx.call_object_method(fmv.payload_ctx_player, &[]).unwrap().unwrap();
+        if let Err(e) = handle_c2s(&lk, data, player.borrow()) {
             let profile = player.get_object_field(mv.player_profile).unwrap();
             let name = profile.call_object_method(mv.game_profile_get_name, &[]).unwrap().unwrap();
             warn(jni, &cs(format!("Failed to handle packet from player {}: {e:?}", BStr::new(&*name.utf_chars().unwrap()))))
         }
-    } else if dir.is_same_object(fmv.network_dir_s2c.raw) {
-        if let Err(e) = handle_s2c(&lk, &*msg) {
-            warn(jni, &cs(format!("Failed to handle packet from server: {e:?}")))
-        }
     }
-}
-
-#[dyn_abi]
-fn handle_msg(jni: &'static JNI, _this: usize, msg: usize, ctx_supplier: usize) {
-    let GlobalObjs { av, fmv, net_defs, .. } = objs();
-    let ctx = BorrowedRef::new(jni, &ctx_supplier).supplier_get(&av.jv).unwrap().unwrap();
-    ctx.call_void_method(fmv.network_ctx_set_handled, &[1]).unwrap();
-    let task = Task { msg: BorrowedRef::new(jni, &msg).new_global_ref().unwrap(), ctx: ctx.new_global_ref().unwrap() };
-    let task = net_defs.task.new_obj(jni, Arc::new(task));
-    ctx.call_object_method(fmv.network_ctx_enqueue_task, &[task.raw]).unwrap();
 }

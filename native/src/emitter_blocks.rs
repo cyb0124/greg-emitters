@@ -6,12 +6,12 @@ use crate::{
     jvm::*,
     mapping_base::*,
     objs,
-    registry::{forge_reg, EMITTER_ID},
+    registry::{register, EMITTER_ID},
     ti,
     util::{
         cleaner::Cleanable,
         client::SolidRenderer,
-        geometry::{block_to_chunk, lerp, new_voxel_shape, write_block_pos, write_dir, GeomExt, DIR_ATTS},
+        geometry::{lerp, new_voxel_shape, write_block_pos, write_dir, GeomExt, DIR_ATTS},
         strict_deserialize,
         tile::{Tile, TileExt, TileSupplier},
         ClassBuilder, ThinWrapper,
@@ -39,6 +39,7 @@ pub struct EmitterBlocks {
     energy_container: ThinWrapper<EnergyContainer>,
     shapes: [GlobalRef<'static>; 6],
     pub menu_type: GlobalRef<'static>,
+    pub cap_provider: GlobalRef<'static>,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -63,18 +64,6 @@ enum SaveData {
     V0(EmitterData),
 }
 
-#[derive(Deserialize)]
-struct LegacySyncData {
-    dir: Option<u8>,
-    zenith: f32,
-    azimuth: f32,
-}
-
-#[derive(Deserialize)]
-struct LegacySaveData {
-    energy: i64,
-}
-
 #[derive(Default)]
 struct EnergyStats {
     eu_accepted: i64,
@@ -84,14 +73,14 @@ struct EnergyStats {
 
 pub struct Emitter {
     tier: u8,
-    energy_cap: GlobalRef<'static>,
+    energy_cap: RefCell<Option<GlobalRef<'static>>>,
     pub data: RefCell<EmitterData>,
     pub beam_id: Cell<Option<NonZeroUsize>>,
     stats: RefCell<EnergyStats>,
 }
 
 impl Cleanable for Emitter {
-    fn free(self: Arc<Self>, jni: &JNI) { Arc::into_inner(self).unwrap().energy_cap.replace_jni(jni); }
+    fn free(self: Arc<Self>, jni: &JNI) { Arc::into_inner(self).unwrap().energy_cap.into_inner().map(|x| x.replace_jni(jni)); }
 }
 
 impl Emitter {
@@ -126,8 +115,7 @@ impl EmitterBlocks {
     pub fn init(jni: &'static JNI, lk: &GlobalMtx, reg_evt: &impl JRef<'static>) -> Self {
         let GlobalObjs { av, cn, mn, mv, fcn, fmn, gcn, gmn, tile_defs, gui_defs, .. } = objs();
         let energy_container = ClassBuilder::new_2(jni, c"java/lang/Object")
-            .interfaces([&*fcn.non_null_supplier.slash, &*gcn.energy_container.slash])
-            .insns(&fmn.non_null_supplier_get, [av.new_var_insn(jni, OP_ALOAD, 0).unwrap(), av.new_insn(jni, OP_ARETURN).unwrap()])
+            .interfaces([&*gcn.energy_container.slash])
             .insns(&gmn.get_input_amps, [av.new_ldc_insn(jni, av.jv.wrap_long(jni, 1).unwrap().raw).unwrap(), av.new_insn(jni, OP_LRETURN).unwrap()])
             .native_2(&gmn.can_input_eu_from_side, can_input_eu_from_side_dyn())
             .native_2(&gmn.accept_eu, accept_eu_dyn())
@@ -138,6 +126,10 @@ impl EmitterBlocks {
             .native_2(&gmn.get_input_eu_per_sec, get_input_eu_per_sec_dyn())
             .define_thin()
             .wrap::<EnergyContainer>();
+        let cap_provider = ClassBuilder::new_2(jni, c"java/lang/Object")
+            .interfaces([&*fcn.cap_provider.slash])
+            .native_2(&fmn.cap_provider_get_cap, get_cap_dyn())
+            .define_empty();
 
         // Blocks
         let block = ClassBuilder::new_2(jni, &cn.base_tile_block.slash)
@@ -165,7 +157,7 @@ impl EmitterBlocks {
             block.call_void_method(mv.base_tile_block_init, &[props.raw]).unwrap();
             blocks.set_object_elem(block_i as _, block.raw).unwrap();
             tier.emitter_block.set(block.new_global_ref().unwrap()).ok().unwrap();
-            forge_reg(reg_evt, &format!("{EMITTER_ID}_{}", tier.name), block.raw);
+            register(reg_evt, &format!("{EMITTER_ID}_{}", tier.name), block.raw);
         }
         blocks = blocks.set_of(&av.jv).unwrap();
 
@@ -183,6 +175,7 @@ impl EmitterBlocks {
             energy_container,
             shapes,
             menu_type: gui_defs.new_menu_type(jni, &EmitterMenuType).new_global_ref().unwrap(),
+            cap_provider: cap_provider.alloc_object().unwrap().new_global_ref().unwrap(),
         }
     }
 }
@@ -197,32 +190,22 @@ impl Tile for Emitter {
 
     fn decode_save(&self, bytes: &[u8]) -> Result<()> {
         let mut data = self.data.borrow_mut();
-        Ok(match strict_deserialize::<SaveData>(bytes) {
-            Ok(SaveData::V0(x)) => *data = x,
-            Err(e) => match strict_deserialize::<LegacySaveData>(bytes) {
-                Ok(LegacySaveData { energy }) => data.energy = energy,
-                Err(_) => return Err(e),
-            },
-        })
+        match strict_deserialize::<SaveData>(bytes) {
+            Ok(SaveData::V0(x)) => Ok(*data = x),
+            Err(e) => Err(e),
+        }
     }
 
     fn decode_sync(&self, bytes: &[u8]) -> Result<()> {
         let mut data = self.data.borrow_mut();
-        Ok(match strict_deserialize::<SyncData>(bytes) {
-            Ok(SyncData { dir, zenith, azimuth, disable_transfer }) => *data = EmitterData { dir, zenith, azimuth, disable_transfer, ..*data },
-            Err(e) => match strict_deserialize::<LegacySyncData>(bytes) {
-                Ok(LegacySyncData { dir: Some(dir), zenith, azimuth }) => *data = EmitterData { dir, zenith, azimuth, ..*data },
-                _ => return Err(e),
-            },
-        })
+        match strict_deserialize::<SyncData>(bytes) {
+            Ok(SyncData { dir, zenith, azimuth, disable_transfer }) => Ok(*data = EmitterData { dir, zenith, azimuth, disable_transfer, ..*data }),
+            Err(e) => Err(e),
+        }
     }
 
-    fn get_cap(&self, cap: BorrowedRef) -> Option<usize> {
-        cap.is_same_object(objs().mtx.lock(cap.jni).unwrap().gmv.get().unwrap().energy_container_cap.raw).then(|| self.energy_cap.raw)
-    }
-
-    fn invalidate_caps(&self, jni: &JNI, lk: &GlobalMtx) {
-        self.energy_cap.with_jni(jni).lazy_opt_invalidate();
+    fn set_removed(&self, jni: &JNI, lk: &GlobalMtx) {
+        self.energy_cap.borrow_mut().take().map(|x| x.replace_jni(jni));
         if let Some(beam_id) = self.beam_id.take() {
             del_beam(jni, lk, beam_id)
         }
@@ -310,7 +293,7 @@ impl TileSupplier for EmitterSupplier {
         let energy_container = Arc::new(EnergyContainer { tile: OnceCell::new() });
         let emitter = Arc::new(Emitter {
             tier: defs.block.read(&lk, block.borrow()).tier,
-            energy_cap: defs.energy_container.new_obj(pos.jni, energy_container.clone()).lazy_opt_of().new_global_ref().unwrap(),
+            energy_cap: Some(defs.energy_container.new_obj(pos.jni, energy_container.clone()).new_global_ref().unwrap()).into(),
             data: <_>::default(),
             beam_id: None.into(),
             stats: <_>::default(),
@@ -323,7 +306,7 @@ impl TileSupplier for EmitterSupplier {
 
 #[dyn_abi]
 fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: usize, tile: usize) {
-    let GlobalObjs { av, fmv, mtx, .. } = objs();
+    let GlobalObjs { fmv, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let tile = BorrowedRef::new(jni, &tile);
     let level = BorrowedRef::new(jni, &level);
@@ -346,14 +329,11 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
             let false = tile.data.borrow().disable_transfer else { break 'fail };
             let Some((pos, dir)) = hit else { break 'fail };
             let true = volts > 0 else { break 'fail };
-            let Some(chunk) = level.level_get_chunk_source().loaded_chunk_at(block_to_chunk(pos)) else { break 'fail };
-            let Some(hit_tile) = chunk.tile_at(&write_block_pos(jni, pos)) else { break 'fail };
-            let gmv = lk.gmv.get().unwrap();
+            let pos = write_block_pos(jni, pos);
             let dir = write_dir(jni, dir);
-            let cap = hit_tile.call_object_method(fmv.get_cap, &[gmv.energy_container_cap.raw, dir.raw]).unwrap().unwrap();
-            let cap = cap.call_object_method(fmv.lazy_opt_resolve, &[]).unwrap().unwrap();
-            let false = cap.opt_is_empty(&av.jv).unwrap() else { break 'fail };
-            let cap = cap.opt_get(&av.jv).unwrap();
+            let gmv = lk.gmv.get().unwrap();
+            let args = [gmv.energy_container_cap.raw, pos.raw, dir.raw];
+            let Some(cap) = level.call_object_method(fmv.level_get_cap, &args).unwrap() else { break 'fail };
             let true = cap.call_bool_method(gmv.can_input_eu_from_side, &[dir.raw]).unwrap() else { break 'fail };
             active = cap.call_long_method(gmv.accept_eu, &[dir.raw, volts as _, 1]).unwrap() > 0
         }
@@ -393,7 +373,7 @@ fn get_drops(jni: &JNI, this: usize, _state: usize, _loot_builder: usize) -> usi
     let tiers = lk.tiers.borrow();
     let tier = lk.emitter_blocks.get().unwrap().block.read(&lk, BorrowedRef::new(jni, &this)).tier;
     let item = tiers[tier as usize].emitter_item.get().unwrap();
-    let stack = mv.item_stack.with_jni(jni).new_object(mv.item_stack_init, &[item.raw, 1, 0]).unwrap();
+    let stack = mv.item_stack.with_jni(jni).new_object(mv.item_stack_init, &[item.raw, 1]).unwrap();
     mv.item_stack.with_jni(jni).new_object_array(1, stack.raw).unwrap().array_as_list(&av.jv).unwrap().into_raw()
 }
 
@@ -431,7 +411,7 @@ fn on_place(jni: &JNI, this: usize, _state: usize, level: usize, pos: usize, _ol
 }
 
 #[dyn_abi]
-fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: usize, player: usize, _hand: usize, _hit: usize) -> usize {
+fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: usize, player: usize, _hit: usize) -> usize {
     let GlobalObjs { mv, mtx, gui_defs, .. } = objs();
     let level = BorrowedRef::new(jni, &level);
     let player = BorrowedRef::new(jni, &player);
@@ -447,6 +427,11 @@ fn on_use(jni: &'static JNI, _block: usize, _state: usize, level: usize, pos: us
     let menu = EmitterMenu::new_server(tile.new_weak_global_ref().unwrap());
     gui_defs.open_menu(&player, &EmitterMenuType, Arc::new(menu), &title, data);
     mv.interaction_result_consume.raw
+}
+
+#[dyn_abi]
+fn get_cap(jni: &JNI, _this: usize, tile: usize, _side: usize) -> usize {
+    objs().mtx.lock(jni).unwrap().read_tile::<Emitter>(BorrowedRef::new(jni, &tile)).energy_cap.borrow().as_ref().map_or(0, |x| x.raw)
 }
 
 //////////////////////////////////////

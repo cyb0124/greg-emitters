@@ -10,7 +10,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Map;
 
-@net.minecraftforge.fml.common.Mod("greg_emitters")
+@net.neoforged.fml.common.Mod("greg_emitters")
 public class Mod {
     public Mod() {
         String path;

@@ -23,6 +23,8 @@ pub fn init() {
     let list = [gt_reg.fmap(|x| x.raw), mv.client.fmap(|x| x.mc.raw)].into_iter().flatten().chain([mv.level_chunk.raw]);
     ti().retransform_classes(&Box::from_iter(list)).unwrap();
     add_forge_listener(&fmv.mod_evt_bus, fcn.reg_evt.sig.to_bytes(), on_forge_reg_dyn());
+    add_forge_listener(&fmv.mod_evt_bus, fcn.reg_caps_evt.sig.to_bytes(), on_reg_caps_dyn());
+    add_forge_listener(&fmv.mod_evt_bus, fcn.reg_payload_evt.sig.to_bytes(), on_reg_payload_dyn());
     add_forge_listener(&fmv.com_evt_bus, fcn.chunk_watch_evt.sig.to_bytes(), on_chunk_watch_dyn());
     add_forge_listener(&fmv.com_evt_bus, fcn.chunk_unwatch_evt.sig.to_bytes(), on_chunk_unwatch_dyn());
     add_forge_listener(&fmv.com_evt_bus, fcn.chunk_load_evt.sig.to_bytes(), on_chunk_load_or_unload_dyn());
@@ -59,26 +61,43 @@ pub fn add_greg_dyn_resource(jni: &JNI, gmv: &GregMV, id: impl Into<Vec<u8>>, js
     data.map_put(&objs().av.jv, key.raw, ba.raw).unwrap();
 }
 
-pub fn forge_reg<'a>(evt: &impl JRef<'a>, id: &str, value: usize) {
-    let fmv = &objs().fmv;
-    let reg = evt.call_object_method(fmv.reg_evt_forge_reg, &[]).unwrap().unwrap();
+pub fn register<'a>(evt: &impl JRef<'a>, id: &str, value: usize) {
+    let GlobalObjs { fmv, mv, .. } = objs();
+    let reg = evt.call_object_method(fmv.reg_evt_get_reg, &[]).unwrap().unwrap();
     let key = reg.jni.new_utf(&cs(format!("{MOD_ID}:{id}"))).unwrap();
-    reg.call_void_method(fmv.forge_reg_reg, &[key.raw, value]).unwrap()
+    mv.registry.with_jni(reg.jni).call_static_object_method(mv.registry_reg, &[reg.raw, key.raw, value]).unwrap();
 }
 
 #[dyn_abi]
 fn on_forge_reg(jni: &'static JNI, _: usize, evt: usize) {
-    let GlobalObjs { fmv, av, mtx, .. } = objs();
+    let GlobalObjs { fmv, mv, av, mtx, .. } = objs();
     let lk = mtx.lock(jni).unwrap();
     let evt = BorrowedRef::new(jni, &evt);
     let key = evt.call_object_method(fmv.reg_evt_key, &[]).unwrap().unwrap();
-    if key.equals(&av.jv, fmv.reg_key_blocks.raw).unwrap() {
+    if key.equals(&av.jv, mv.reg_key_block.raw).unwrap() {
         lk.emitter_blocks.get_or_init(|| EmitterBlocks::init(jni, &lk, &evt));
-    } else if key.equals(&av.jv, fmv.reg_key_tile_types.raw).unwrap() {
-        forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
-    } else if key.equals(&av.jv, fmv.reg_key_menu_types.raw).unwrap() {
-        forge_reg(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().menu_type.raw)
+    } else if key.equals(&av.jv, mv.reg_key_tile_type.raw).unwrap() {
+        register(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().tile_type.raw)
+    } else if key.equals(&av.jv, mv.reg_key_menu.raw).unwrap() {
+        register(&evt, EMITTER_ID, lk.emitter_blocks.get().unwrap().menu_type.raw)
     }
+}
+
+#[dyn_abi]
+fn on_reg_caps(jni: &'static JNI, _: usize, evt: usize) {
+    let lk = objs().mtx.lock(jni).unwrap();
+    let evt = BorrowedRef::new(jni, &evt);
+    let defs = lk.emitter_blocks.get().unwrap();
+    let gmv = lk.gmv.get().unwrap();
+    evt.call_void_method(objs().fmv.reg_caps_evt_reg_tile, &[gmv.energy_container_cap.raw, defs.tile_type.raw, defs.cap_provider.raw]).unwrap()
+}
+
+#[dyn_abi]
+fn on_reg_payload(jni: &'static JNI, _: usize, evt: usize) {
+    let GlobalObjs { fmv, net_defs, .. } = objs();
+    let version = jni.new_utf(PROTOCOL_VERSION).unwrap();
+    let reg = BorrowedRef::new(jni, &evt).call_object_method(fmv.reg_payload_evt_reg, &[version.raw]).unwrap().unwrap();
+    reg.call_object_method(fmv.payload_reg_bidir, &[net_defs.payload_type.raw, net_defs.stream_codec.raw, net_defs.payload_handler.raw]).unwrap();
 }
 
 fn read_chunk_watch_base<'a>(evt: &impl JRef<'a>) -> (LocalRef<'a>, Point2<i32>) {
@@ -123,7 +142,8 @@ fn on_level_render(jni: &JNI, _: usize, evt: usize) {
     let camera = evt.get_object_field(fmvc.render_lvl_stg_evt_camera).unwrap();
     let camera_pos = camera.get_object_field(mvc.camera_pos).unwrap().read_vec3d().cast();
     let tick = evt.get_int_field(fmvc.render_lvl_stg_evt_tick);
-    let sub_tick = evt.get_float_field(fmvc.render_lvl_stg_evt_sub_tick);
+    let sub_tick = evt.get_object_field(fmvc.render_lvl_stg_evt_sub_tick).unwrap();
+    let sub_tick = sub_tick.call_float_method(mvc.delta_tracker_get_partial_tick, &[0]).unwrap();
     let renderer = evt.get_object_field(fmvc.render_lvl_stg_evt_renderer).unwrap();
     let buffers = renderer.get_object_field(mvc.level_renderer_buffers).unwrap();
     let source = buffers.get_object_field(mvc.render_buffers_buffer_source).unwrap();

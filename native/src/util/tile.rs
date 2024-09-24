@@ -2,7 +2,7 @@ use super::{
     cleaner::Cleanable,
     client::SolidRenderer,
     geometry::GeomExt,
-    mapping::{ForgeMN, CN, MN},
+    mapping::{CN, MN},
     nbt::{new_compound, NBTExt, KEY_SAVE, KEY_SYNC},
     ClassBuilder, ClassNamer, FatWrapper,
 };
@@ -21,12 +21,6 @@ use nalgebra::{Affine3, Point2};
 
 impl<'a, T: JRef<'a>> TileExt<'a> for T {}
 pub trait TileExt<'a>: JRef<'a> {
-    fn lazy_opt_invalidate(&self) { self.call_void_method(objs().fmv.lazy_opt_invalidate, &[]).unwrap() }
-    fn lazy_opt_of(&self) -> LocalRef<'a> {
-        let fmv = &objs().fmv;
-        fmv.lazy_opt.with_jni(self.jni()).call_static_object_method(fmv.lazy_opt_of, &[self.raw()]).unwrap().unwrap()
-    }
-
     fn tile_level(&self) -> Option<LocalRef<'a>> { self.get_object_field(objs().mv.tile_level) }
     fn tile_pos(&self) -> LocalRef<'a> { self.get_object_field(objs().mv.tile_pos).unwrap() }
     fn block_state_get_block(&self) -> LocalRef<'a> { self.call_object_method(objs().mv.block_state_get_block, &[]).unwrap().unwrap() }
@@ -57,8 +51,7 @@ pub trait Tile: Cleanable {
     fn encode_sync(&self) -> Vec<u8>;
     fn decode_save(&self, bytes: &[u8]) -> Result<()>;
     fn decode_sync(&self, bytes: &[u8]) -> Result<()>;
-    fn get_cap(&self, cap: BorrowedRef) -> Option<usize>;
-    fn invalidate_caps(&self, jni: &JNI, lk: &GlobalMtx);
+    fn set_removed(&self, jni: &JNI, lk: &GlobalMtx);
     fn render(&self, lk: &GlobalMtx, sr: SolidRenderer, tf: Affine3<f32>);
 }
 
@@ -68,14 +61,13 @@ pub struct TileDefs {
 }
 
 impl TileDefs {
-    pub fn init(av: &AV<'static>, cn: &CN<Arc<CSig>>, mn: &MN<MSig>, fmn: &ForgeMN, namer: &ClassNamer) -> Self {
+    pub fn init(av: &AV<'static>, cn: &CN<Arc<CSig>>, mn: &MN<MSig>, namer: &ClassNamer) -> Self {
         let jni = av.ldr.jni;
         let tile = ClassBuilder::new_1(av, namer, &cn.tile.slash)
             .native_2(&mn.tile_get_update_tag, get_update_tag_dyn())
             .native_2(&mn.tile_save_additional, save_additional_dyn())
-            .native_2(&mn.tile_load, on_load_dyn())
-            .native_2(&fmn.get_cap, get_cap_dyn())
-            .native_2(&fmn.invalidate_caps, invalidate_caps_dyn())
+            .native_2(&mn.tile_load_additional, load_additional_dyn())
+            .native_2(&mn.tile_set_removed, set_removed_dyn())
             .insns(
                 &mn.tile_get_update_pkt,
                 [
@@ -122,7 +114,7 @@ fn tile_supplier_create(jni: &'static JNI, this: usize, pos: usize, state: usize
 }
 
 #[dyn_abi]
-fn get_update_tag(jni: &JNI, tile: usize) -> usize {
+fn get_update_tag(jni: &JNI, tile: usize, _regs: usize) -> usize {
     let lk = objs().mtx.lock(jni).unwrap();
     let tile = objs().tile_defs.tile.read(&lk, BorrowedRef::new(jni, &tile));
     let tag = new_compound(jni);
@@ -131,20 +123,20 @@ fn get_update_tag(jni: &JNI, tile: usize) -> usize {
 }
 
 #[dyn_abi]
-fn save_additional(jni: &JNI, tile: usize, tag: usize) {
+fn save_additional(jni: &JNI, tile: usize, tag: usize, regs: usize) {
     let GlobalObjs { mv, tile_defs, mtx, .. } = objs();
     let tag = BorrowedRef::new(jni, &tag);
     let tile = BorrowedRef::new(jni, &tile);
-    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[tag.raw]).unwrap();
+    tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_save_additional, &[tag.raw, regs]).unwrap();
     tag.compound_put_byte_array(KEY_SAVE, &tile_defs.tile.read(&mtx.lock(jni).unwrap(), tile).encode_save());
 }
 
 #[dyn_abi]
-fn on_load(jni: &JNI, tile: usize, nbt: usize) {
+fn load_additional(jni: &JNI, tile: usize, nbt: usize, regs: usize) {
     let GlobalObjs { mv, tile_defs, mtx, .. } = objs();
     let j_tile = BorrowedRef::new(jni, &tile);
     let tag = BorrowedRef::new(jni, &nbt);
-    j_tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load, &[tag.raw]).unwrap();
+    j_tile.call_nonvirtual_void_method(mv.tile.raw, mv.tile_load_additional, &[tag.raw, regs]).unwrap();
     let lk = mtx.lock(jni).unwrap();
     let tile = tile_defs.tile.read(&lk, j_tile);
     let mut data = tag.compound_get_byte_array(KEY_SYNC);
@@ -164,21 +156,11 @@ fn on_load(jni: &JNI, tile: usize, nbt: usize) {
 }
 
 #[dyn_abi]
-fn get_cap(jni: &JNI, this: usize, cap: usize, side: usize) -> usize {
-    let GlobalObjs { fmv, tile_defs, mtx, .. } = objs();
+fn set_removed(jni: &JNI, this: usize) {
+    let GlobalObjs { mv, tile_defs, mtx, .. } = objs();
     let this = BorrowedRef::new(jni, &this);
-    if let Some(cap) = tile_defs.tile.read(&mtx.lock(jni).unwrap(), this).get_cap(BorrowedRef::new(jni, &cap)) {
-        cap
-    } else {
-        this.call_nonvirtual_object_method(fmv.cap_provider.raw, fmv.get_cap, &[cap, side]).unwrap().unwrap().into_raw()
-    }
-}
-
-#[dyn_abi]
-fn invalidate_caps(jni: &JNI, this: usize) {
-    let GlobalObjs { fmv, tile_defs, mtx, .. } = objs();
-    let this = BorrowedRef::new(jni, &this);
-    this.call_nonvirtual_void_method(fmv.cap_provider.raw, fmv.invalidate_caps, &[]).unwrap();
     let lk = mtx.lock(jni).unwrap();
-    tile_defs.tile.read(&lk, this).invalidate_caps(jni, &lk)
+    tile_defs.tile.read(&lk, this).set_removed(jni, &lk);
+    drop(lk);
+    this.call_nonvirtual_void_method(mv.tile.raw, mv.tile_set_removed, &[]).unwrap();
 }

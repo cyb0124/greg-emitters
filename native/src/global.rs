@@ -89,7 +89,7 @@ impl GlobalObjs {
         let fcn = ForgeCN::new();
         let fmn = ForgeMN::new(&cn, &fcn);
         let fmv = ForgeMV::new(&av, &cn, &fcn, &fmn);
-        let mn = MN::new(&av, &cn, &fmv);
+        let mn = MN::new(&cn);
         let mv = MV::new(&av, &cn, &mn, fmv.client.is_some());
         let gcn = GregCN::new();
 
@@ -121,9 +121,9 @@ impl GlobalObjs {
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
             client_defs: mv.client.fmap(|_| ClientDefs::init(&av, &namer, &cn, &mn)),
-            net_defs: NetworkDefs::init(&av, &namer, &mv, &fmv),
+            net_defs: NetworkDefs::init(&av, &namer, &cn, &mn, &mv, &fcn, &fmn),
             gui_defs: GUIDefs::init(&av, &cn, &mn, &fcn, &fmn, &namer),
-            tile_defs: TileDefs::init(&av, &cn, &mn, &fmn, &namer),
+            tile_defs: TileDefs::init(&av, &cn, &mn, &namer),
             cleaner: Cleaner::new(&av, &namer),
             gmn: GregMN::new(&cn, &gcn),
             namer,

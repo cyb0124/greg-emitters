@@ -392,7 +392,6 @@ impl ClientBeam {
             let p = pts[i];
             vb.call_object_method(mvc.vertex_consumer_pos, &[pose.raw(), f_raw(p.x), f_raw(p.y), f_raw(p.z)]).unwrap();
             vb.call_object_method(mvc.vertex_consumer_color, &[f_raw(color.x), f_raw(color.y), f_raw(color.z), f_raw(1.)]).unwrap();
-            vb.call_void_method(mvc.vertex_consumer_end_vertex, &[]).unwrap()
         }
     }
 }

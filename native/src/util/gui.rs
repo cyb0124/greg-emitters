@@ -121,8 +121,7 @@ impl GUIDefs {
         let title = title.translatable().new_global_ref().unwrap();
         let provider = MenuProvider { title, menu_type, menu: RefCell::new(Some(menu)), data };
         let provider = self.menu_provider.new_obj(player.jni(), Arc::new(provider));
-        let network_hooks = objs().fmv.network_hooks.with_jni(player.jni());
-        network_hooks.call_static_void_method(objs().fmv.network_hooks_open_screen, &[player.raw(), provider.raw, provider.raw]).unwrap()
+        player.call_object_method(objs().fmv.player_open_menu, &[provider.raw, provider.raw]).unwrap();
     }
 }
 

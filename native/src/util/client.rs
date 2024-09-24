@@ -36,17 +36,16 @@ pub trait ClientExt<'a>: JRef<'a> {
         render_sys.call_static_void_method(mvc.render_sys_enable_blend, &[]).unwrap();
         render_sys.call_static_void_method(mvc.render_sys_disable_cull, &[]).unwrap();
         let tess = mvc.tesselator.with_jni(self.jni()).call_static_object_method(mvc.tesselator_get_inst, &[]).unwrap().unwrap();
-        let vb = tess.call_object_method(mvc.tesselator_get_builder, &[]).unwrap().unwrap();
-        vb.call_void_method(mvc.buffer_builder_begin, &[mvc.vertex_mode_tris.raw, mvc.default_vertex_fmt_pos_color.raw]).unwrap();
+        let vb = tess.call_object_method(mvc.tesselator_begin, &[mvc.vertex_mode_tris.raw, mvc.default_vertex_fmt_pos_color.raw]).unwrap().unwrap();
         for &idx in &mesh.indices {
             let v = &mesh.vertices[idx as usize];
             vb.call_object_method(mvc.vertex_consumer_pos, &[pose.raw, f_raw(v.pos.x), f_raw(v.pos.y), f_raw(0.)]).unwrap();
             vb.call_object_method(mvc.vertex_consumer_color, &[f_raw(v.color.x), f_raw(v.color.y), f_raw(v.color.z), f_raw(v.color.w)]).unwrap();
-            vb.call_void_method(mvc.vertex_consumer_end_vertex, &[]).unwrap()
         }
         mesh.indices.clear();
         mesh.vertices.clear();
-        tess.call_void_method(mvc.tesselator_end, &[]).unwrap();
+        let data = vb.call_object_method(mvc.buffer_builder_build, &[]).unwrap().unwrap();
+        mvc.buffer_uploader.with_jni(self.jni()).call_static_void_method(mvc.buffer_uploader_draw, &[data.raw]).unwrap();
         render_sys.call_static_void_method(mvc.render_sys_enable_cull, &[]).unwrap();
         render_sys.call_static_void_method(mvc.render_sys_disable_blend, &[]).unwrap()
     }
@@ -125,14 +124,14 @@ fn container_screen_rect(screen: BorrowedRef, menu: &dyn Menu) -> Rect {
 }
 
 #[dyn_abi]
-fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, _partial_tick: f32, mx: i32, my: i32) {
+fn container_screen_render_bg(jni: &JNI, this: usize, gui_graphics: usize, sub_tick: f32, mx: i32, my: i32) {
     let mvc = objs().mv.client.uref();
     let this = BorrowedRef::new(jni, &this);
     let menu = this.get_object_field(mvc.container_screen_menu).unwrap();
     let lk = objs().mtx.lock(jni).unwrap();
     let menu = objs().gui_defs.menu.read(&lk, menu.borrow());
     if menu.should_draw_dark_bg() {
-        this.call_void_method(mvc.screen_render_background, &[gui_graphics]).unwrap()
+        this.call_void_method(mvc.screen_render_background, &[gui_graphics, mx as _, my as _, f_raw(sub_tick)]).unwrap()
     }
     menu.render_bg(&lk, this, BorrowedRef::new(jni, &gui_graphics), container_screen_rect(this, menu), point![mx, my])
 }
@@ -260,10 +259,7 @@ impl<'a> SolidRenderer<'a> {
             f_raw(p.x),
             f_raw(p.y),
             f_raw(p.z),
-            f_raw(1.),
-            f_raw(1.),
-            f_raw(1.),
-            f_raw(1.),
+            0xFFFFFFFF,
             f_raw(u),
             f_raw(v),
             self.overlay as _,
