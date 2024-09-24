@@ -426,7 +426,7 @@ pub mod path {
     use alloc::vec::Vec;
     use nalgebra::{point, Point2};
 
-    pub fn rounded_rectangle(path: &mut Vec<Point2<f32>>, rect: Rect, rounding: Rounding) {
+    pub fn rounded_rectangle(path: &mut Vec<Point2<f32>>, rect: Rect, rounding: Rounding, gui_scale: f32) {
         path.clear();
         let min = rect.min;
         let max = rect.max;
@@ -439,42 +439,43 @@ pub mod path {
             path.push(point!(min.x, max.y));
         } else {
             let eps = f32::EPSILON * rect.size().max();
-            add_circle_quadrant(path, point!(max.x - r.se, max.y - r.se), r.se, 0.0);
+            add_circle_quadrant(path, point!(max.x - r.se, max.y - r.se), r.se, 0.0, gui_scale);
             if rect.width() <= r.se + r.sw + eps {
                 path.pop();
             }
-            add_circle_quadrant(path, point!(min.x + r.sw, max.y - r.sw), r.sw, 1.0);
+            add_circle_quadrant(path, point!(min.x + r.sw, max.y - r.sw), r.sw, 1.0, gui_scale);
             if rect.height() <= r.sw + r.nw + eps {
                 path.pop();
             }
-            add_circle_quadrant(path, point!(min.x + r.nw, min.y + r.nw), r.nw, 2.0);
+            add_circle_quadrant(path, point!(min.x + r.nw, min.y + r.nw), r.nw, 2.0, gui_scale);
             if rect.width() <= r.nw + r.ne + eps {
                 path.pop();
             }
-            add_circle_quadrant(path, point!(max.x - r.ne, min.y + r.ne), r.ne, 3.0);
+            add_circle_quadrant(path, point!(max.x - r.ne, min.y + r.ne), r.ne, 3.0, gui_scale);
             if rect.height() <= r.ne + r.se + eps {
                 path.pop();
             }
         }
     }
 
-    pub fn add_circle_quadrant(path: &mut Vec<Point2<f32>>, center: Point2<f32>, radius: f32, quadrant: f32) {
+    pub fn add_circle_quadrant(path: &mut Vec<Point2<f32>>, center: Point2<f32>, radius: f32, quadrant: f32, gui_scale: f32) {
         use super::precomputed_vertices::*;
-        if radius <= 0.0 {
+        let scaled_radius = radius * gui_scale;
+        if scaled_radius <= 0.0 {
             path.push(center);
-        } else if radius <= 2.0 {
+        } else if scaled_radius <= 2.0 {
             let offset = quadrant as usize * 2;
             let quadrant_vertices = &CIRCLE_8[offset..=offset + 2];
             path.extend(quadrant_vertices.iter().map(|&n| center + radius * n));
-        } else if radius <= 5.0 {
+        } else if scaled_radius <= 5.0 {
             let offset = quadrant as usize * 4;
             let quadrant_vertices = &CIRCLE_16[offset..=offset + 4];
             path.extend(quadrant_vertices.iter().map(|&n| center + radius * n));
-        } else if radius < 18.0 {
+        } else if scaled_radius < 18.0 {
             let offset = quadrant as usize * 8;
             let quadrant_vertices = &CIRCLE_32[offset..=offset + 8];
             path.extend(quadrant_vertices.iter().map(|&n| center + radius * n));
-        } else if radius < 50.0 {
+        } else if scaled_radius < 50.0 {
             let offset = quadrant as usize * 16;
             let quadrant_vertices = &CIRCLE_64[offset..=offset + 16];
             path.extend(quadrant_vertices.iter().map(|&n| center + radius * n));
@@ -654,6 +655,7 @@ fn mul_color(mut color: Vector4<f32>, factor: f32) -> Vector4<f32> {
 }
 
 pub struct Tessellator {
+    gui_scale: f32,
     feathering: f32,
     tmp_path: Path,
     tmp_pts: Vec<Point2<f32>>,
@@ -663,8 +665,8 @@ pub struct Tessellator {
 impl Tessellator {
     pub fn new(jni: &JNI) -> Self {
         let mvc = objs().mv.client.uref();
-        let gui_scale = mvc.window_inst.with_jni(jni).call_double_method(mvc.window_get_gui_scale, &[]).unwrap();
-        Self { feathering: gui_scale.recip() as _, tmp_path: Path::default(), tmp_pts: Vec::new(), mesh: Mesh::default() }
+        let gui_scale = mvc.window_inst.with_jni(jni).call_double_method(mvc.window_get_gui_scale, &[]).unwrap() as _;
+        Self { gui_scale, feathering: gui_scale.recip(), tmp_path: Path::default(), tmp_pts: Vec::new(), mesh: Mesh::default() }
     }
 
     pub fn circle(&mut self, center: Point2<f32>, radius: f32, fill: Vector4<f32>, stroke: &Stroke) {
@@ -716,7 +718,7 @@ impl Tessellator {
             self.line(line, stroke);
         } else {
             self.tmp_path.clear();
-            path::rounded_rectangle(&mut self.tmp_pts, rect, rounding);
+            path::rounded_rectangle(&mut self.tmp_pts, rect, rounding, self.gui_scale);
             self.tmp_path.add_line_loop(&self.tmp_pts);
             self.tmp_path.fill(self.feathering, fill, &mut self.mesh);
             self.tmp_path.stroke(self.feathering, true, stroke, &mut self.mesh);
