@@ -1,7 +1,6 @@
 use crate::{jvm::*, objs};
 use core::f32::consts::FRAC_1_SQRT_2;
 use nalgebra::{point, vector, Point2, Point3, Quaternion, Unit, UnitQuaternion, UnitVector3, Vector2, Vector3};
-use num_traits::Signed;
 
 pub const DIR_STEPS: [Vector3<i32>; 6] =
     [vector![0, -1, 0], vector![0, 1, 0], vector![0, 0, -1], vector![0, 0, 1], vector![-1, 0, 0], vector![1, 0, 0]];

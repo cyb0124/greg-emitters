@@ -1,11 +1,11 @@
 #![no_std]
 #![no_main]
-#![feature(unsize, ptr_metadata, try_blocks)]
+#![feature(unsize, ptr_metadata, try_blocks, sync_unsafe_cell)]
 
 #[cfg(target_arch = "x86_64")]
 macro_rules! dyn_abi {
     ($arg_types:tt, $ret:ty, $addr:expr, $arg_terms:tt) => {{
-        if unsafe { crate::ENV.is_win } {
+        if unsafe { (*crate::ENV.get()).is_win } {
             let func: extern "win64" fn $arg_types -> $ret = unsafe { core::mem::transmute($addr as *const ()) };
             func $arg_terms
         } else {
@@ -37,14 +37,14 @@ mod util;
 
 extern crate alloc;
 use alloc::{ffi::CString, format};
-use core::{alloc::GlobalAlloc, alloc::Layout, arch::asm, panic::PanicInfo};
+use core::{alloc::Layout, arch::asm, cell::SyncUnsafeCell, panic::PanicInfo};
 use global::GlobalObjs;
 use jvm::*;
 
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
     'fail: {
-        let Some(jvm) = (unsafe { ENV.jvm.as_ref() }) else { break 'fail };
+        let Some(jvm) = (unsafe { (*ENV.get()).jvm.as_ref() }) else { break 'fail };
         let Ok(jni) = jvm.jvm.get_jni() else { break 'fail };
         let Ok(msg) = CString::new(format!("{info}")) else { break 'fail };
         jni.fatal_error(&msg)
@@ -57,32 +57,33 @@ fn panic_handler(info: &PanicInfo) -> ! {
     }
 }
 
+unsafe impl Sync for GlobalJVM {}
 struct GlobalJVM {
     jvm: &'static JVM,
     ti: &'static JVMTI,
 }
 
-struct GlobalEnv
-where
-    GlobalObjs: Sync,
-{
+struct GlobalEnv {
     #[cfg(target_arch = "x86_64")]
     is_win: bool,
     jvm: Option<GlobalJVM>,
     objs: Option<GlobalObjs>,
 }
 
-#[global_allocator]
-static mut ENV: GlobalEnv = GlobalEnv {
+static ENV: SyncUnsafeCell<GlobalEnv> = SyncUnsafeCell::new(GlobalEnv {
     #[cfg(target_arch = "x86_64")]
     is_win: false,
     jvm: None,
     objs: None,
-};
+});
 
-fn ti() -> &'static JVMTI { unsafe { ENV.jvm.as_ref().unwrap_unchecked().ti } }
-fn objs() -> &'static GlobalObjs { unsafe { ENV.objs.as_ref().unwrap_unchecked() } }
-unsafe impl GlobalAlloc for GlobalEnv {
+fn ti() -> &'static JVMTI { unsafe { (*ENV.get()).jvm.as_ref().unwrap_unchecked().ti } }
+fn objs() -> &'static GlobalObjs { unsafe { (*ENV.get()).objs.as_ref().unwrap_unchecked() } }
+
+struct GlobalAlloc;
+#[global_allocator]
+static GLOBAL_ALLOC: GlobalAlloc = GlobalAlloc;
+unsafe impl core::alloc::GlobalAlloc for GlobalAlloc {
     unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) { ti().deallocate(ptr).unwrap() }
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         assert!(layout.align() <= 16);
@@ -93,10 +94,10 @@ unsafe impl GlobalAlloc for GlobalEnv {
 fn entry_common(jni: &'static JNI, inst: usize) {
     let jvm = jni.get_jvm().unwrap();
     let owned_ti = jvm.get_jvmti().unwrap();
-    unsafe { ENV.jvm = Some(GlobalJVM { jvm, ti: owned_ti.raw }) }
+    unsafe { (*ENV.get()).jvm = Some(GlobalJVM { jvm, ti: owned_ti.raw }) }
     core::mem::forget(owned_ti);
     let inst = BorrowedRef::new(jni, &inst);
-    unsafe { ENV.objs = Some(GlobalObjs::new(inst.get_object_class())) }
+    unsafe { (*ENV.get()).objs = Some(GlobalObjs::new(inst.get_object_class())) }
     registry::init()
 }
 
@@ -107,7 +108,7 @@ pub extern "sysv64" fn entry_sysv64(jni: &'static JNI, inst: usize) { entry_comm
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub extern "win64" fn entry_win64(jni: &'static JNI, inst: usize) {
-    unsafe { ENV.is_win = true }
+    unsafe { (*ENV.get()).is_win = true }
     entry_common(jni, inst)
 }
 
