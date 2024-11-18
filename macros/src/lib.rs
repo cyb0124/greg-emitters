@@ -23,7 +23,7 @@ pub fn dyn_abi(_: TokenStream, input: TokenStream) -> TokenStream {
         fn #name_dyn() -> usize {
             extern "sysv64" fn #name_a(#(#arg_list,)*) #ret { #name(#(#arg_names,)*) }
             extern "win64" fn #name_b(#(#arg_list,)*) #ret { #name(#(#arg_names,)*) }
-            if unsafe { crate::ENV.is_win } { #name_b as _ } else { #name_a as _ }
+            if unsafe { (*crate::ENV.get()).is_win } { #name_b as _ } else { #name_a as _ }
         }
         #[cfg(target_arch = "aarch64")]
         fn #name_dyn() -> usize {
