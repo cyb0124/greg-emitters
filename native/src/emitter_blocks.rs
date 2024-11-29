@@ -7,12 +7,11 @@ use crate::{
     mapping_base::*,
     objs,
     registry::{forge_reg, EMITTER_ID},
-    ti,
     util::{
         cleaner::Cleanable,
         client::SolidRenderer,
         geometry::{block_to_chunk, lerp, new_voxel_shape, write_block_pos, write_dir, GeomExt, DIR_ATTS},
-        strict_deserialize,
+        id_hash, strict_deserialize,
         tile::{Tile, TileExt, TileSupplier},
         ClassBuilder, ThinWrapper,
     },
@@ -336,7 +335,7 @@ fn on_tick(jni: &'static JNI, _this: usize, level: usize, pos: usize, _state: us
         let beam = srv.beams.get_mut(&beam_id).unwrap();
         let mut should_broadcast = false;
         if beam.dirty {
-            let dim = srv.dims.find_mut(ti().id_hash(level.raw).unwrap() as _, |x| level.is_same_object(x.level.0.raw)).unwrap();
+            let dim = srv.dims.find_mut(id_hash(level.raw), |x| level.is_same_object(x.level.0.raw)).unwrap();
             beam.recompute(jni, &mut srv.players, dim, beam_id);
             should_broadcast = true
         }

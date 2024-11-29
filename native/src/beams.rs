@@ -4,9 +4,9 @@ use crate::{
     mapping_base::MBOptExt,
     objs,
     packets::S2C,
-    ti,
     util::{
         geometry::{block_to_chunk, write_block_pos, write_vec3d, CoveringBlocks, GeomExt},
+        id_hash,
         tile::TileExt,
     },
 };
@@ -30,15 +30,15 @@ pub struct ClientState {
 }
 
 pub struct PlayerState {
-    player: (GlobalRef<'static>, i32),
-    level: (GlobalRef<'static>, i32),
+    player: (GlobalRef<'static>, u64),
+    level: (GlobalRef<'static>, u64),
     chunks: HashSet<Point2<i32>>,
     beams: HashMap<NonZeroUsize, usize>,
 }
 
 pub struct BeamState {
-    level: (GlobalRef<'static>, i32),
-    players: HashTable<(GlobalRef<'static>, i32)>,
+    level: (GlobalRef<'static>, u64),
+    players: HashTable<(GlobalRef<'static>, u64)>,
     chunks: HashSet<Point2<i32>>,
     blocks: Vec<Point3<i32>>,
     tier: u8,
@@ -52,7 +52,7 @@ pub struct BeamState {
 
 #[derive(Default)]
 struct ChunkState {
-    players: HashTable<(GlobalRef<'static>, i32)>,
+    players: HashTable<(GlobalRef<'static>, u64)>,
     beams: HashSet<NonZeroUsize>,
 }
 
@@ -62,7 +62,7 @@ pub enum TrackedBlock {
 }
 
 pub struct DimState {
-    pub level: (GlobalRef<'static>, i32),
+    pub level: (GlobalRef<'static>, u64),
     chunks: HashMap<Point2<i32>, ChunkState>,
     pub blocks: HashMap<Point3<i32>, TrackedBlock>,
 }
@@ -81,8 +81,8 @@ impl Default for ServerState {
 }
 
 fn find_or_add_dim<'a>(table: &'a mut HashTable<DimState>, level: &impl JRef<'static>) -> &'a mut DimState {
-    let hash = ti().id_hash(level.raw()).unwrap();
-    (table.entry(hash as _, |x| level.is_same_object(x.level.0.raw), |x| x.level.1 as _))
+    let hash = id_hash(level.raw());
+    (table.entry(hash, |x| level.is_same_object(x.level.0.raw), |x| x.level.1))
         .or_insert_with(|| DimState { level: (level.new_global_ref().unwrap(), hash), chunks: HashMap::new(), blocks: HashMap::new() })
         .into_mut()
 }
@@ -158,12 +158,12 @@ impl DimState {
 }
 
 impl BeamState {
-    fn add_player(players: &mut HashTable<(GlobalRef<'static>, i32)>, player: &impl JRef<'static>, p_hash: i32) {
-        players.insert_unique(p_hash as _, (player.new_global_ref().unwrap(), p_hash), |x| x.1 as _);
+    fn add_player(players: &mut HashTable<(GlobalRef<'static>, u64)>, player: &impl JRef<'static>, p_hash: u64) {
+        players.insert_unique(p_hash, (player.new_global_ref().unwrap(), p_hash), |x| x.1);
     }
 
-    fn del_player<'a>(players: &mut HashTable<(GlobalRef<'static>, i32)>, player: &impl JRef<'a>, p_hash: i32) {
-        players.find_entry(p_hash as _, |x| player.is_same_object(x.0.raw)).ok().unwrap().remove().0 .0.replace_jni(player.jni());
+    fn del_player<'a>(players: &mut HashTable<(GlobalRef<'static>, u64)>, player: &impl JRef<'a>, p_hash: u64) {
+        players.find_entry(p_hash, |x| player.is_same_object(x.0.raw)).ok().unwrap().remove().0 .0.replace_jni(player.jni());
     }
 
     fn send_del_beam<'a>(id: NonZeroUsize, player: &impl JRef<'a>) { objs().net_defs.send_s2c(player, &S2C::DelBeam { id }) }
@@ -219,7 +219,7 @@ impl BeamState {
             c_state.beams.insert(id);
             for &(ref player, p_hash) in &c_state.players {
                 let player = player.with_jni(jni);
-                if players.find_mut(p_hash as _, |x| player.is_same_object(x.player.0.raw)).unwrap().incr_beam(id) {
+                if players.find_mut(p_hash, |x| player.is_same_object(x.player.0.raw)).unwrap().incr_beam(id) {
                     Self::add_player(&mut self.players, &player, p_hash);
                 }
             }
@@ -229,7 +229,7 @@ impl BeamState {
             let c_state = c_entry.get_mut();
             for &(ref player, p_hash) in &c_state.players {
                 let player = player.with_jni(jni);
-                if players.find_mut(p_hash as _, |x| player.is_same_object(x.player.0.raw)).unwrap().decr_beam(id) {
+                if players.find_mut(p_hash, |x| player.is_same_object(x.player.0.raw)).unwrap().decr_beam(id) {
                     Self::del_player(&mut self.players, &player, p_hash);
                     Self::send_del_beam(id, &player)
                 }
@@ -245,13 +245,13 @@ pub fn on_chunk_watch(player: &impl JRef<'static>, level: &impl JRef<'static>, p
     let lk = objs().mtx.lock(level.jni()).unwrap();
     let mut srv = lk.server_state.borrow_mut();
     let srv = &mut *srv;
-    let p_hash = ti().id_hash(player.raw()).unwrap();
+    let p_hash = id_hash(player.raw());
     let dim = find_or_add_dim(&mut srv.dims, level);
     let chunk = dim.chunks.entry(pos).or_default();
-    let hash_table::Entry::Vacant(p_entry) = chunk.players.entry(p_hash as _, |x| player.is_same_object(x.0.raw), |x| x.1 as _) else { return };
+    let hash_table::Entry::Vacant(p_entry) = chunk.players.entry(p_hash, |x| player.is_same_object(x.0.raw), |x| x.1) else { return };
     p_entry.insert((player.new_global_ref().unwrap(), p_hash));
     let l_hash = dim.level.1;
-    let p_entry = (srv.players.entry(p_hash as _, |x| player.is_same_object(x.player.0.raw), |x| x.player.1 as _)).or_insert_with(|| PlayerState {
+    let p_entry = (srv.players.entry(p_hash, |x| player.is_same_object(x.player.0.raw), |x| x.player.1)).or_insert_with(|| PlayerState {
         player: (player.new_global_ref().unwrap(), p_hash),
         level: (level.new_global_ref().unwrap(), l_hash),
         chunks: HashSet::new(),
@@ -273,14 +273,14 @@ pub fn on_chunk_unwatch<'a>(player: &impl JRef<'a>, pos: Point2<i32>) {
     let lk = objs().mtx.lock(player.jni()).unwrap();
     let mut srv = lk.server_state.borrow_mut();
     let srv = &mut *srv;
-    let p_hash = ti().id_hash(player.raw()).unwrap();
-    let Ok(mut p_entry) = srv.players.find_entry(p_hash as _, |x| player.is_same_object(x.player.0.raw)) else { return };
+    let p_hash = id_hash(player.raw());
+    let Ok(mut p_entry) = srv.players.find_entry(p_hash, |x| player.is_same_object(x.player.0.raw)) else { return };
     let p_state = p_entry.get_mut();
     let hash_set::Entry::Occupied(c_entry) = p_state.chunks.entry(pos) else { return };
     c_entry.remove();
     let level = p_state.level.0.with_jni(player.jni()).new_local_ref().unwrap();
     let l_hash = p_state.level.1;
-    let mut d_entry = srv.dims.find_entry(l_hash as _, |x| level.is_same_object(x.level.0.raw)).ok().unwrap();
+    let mut d_entry = srv.dims.find_entry(l_hash, |x| level.is_same_object(x.level.0.raw)).ok().unwrap();
     let hash_map::Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { unreachable!() };
     let c_state = c_entry.get_mut();
     for &id in &c_state.beams {
@@ -289,7 +289,7 @@ pub fn on_chunk_unwatch<'a>(player: &impl JRef<'a>, pos: Point2<i32>) {
             BeamState::send_del_beam(id, player)
         }
     }
-    c_state.players.find_entry(p_hash as _, |x| player.is_same_object(x.0.raw)).ok().unwrap().remove().0 .0.replace_jni(level.jni);
+    c_state.players.find_entry(p_hash, |x| player.is_same_object(x.0.raw)).ok().unwrap().remove().0 .0.replace_jni(level.jni);
     del_chunk_if_empty(c_entry);
     del_dim_if_empty(level.jni, d_entry);
     if p_state.chunks.is_empty() {
@@ -304,7 +304,7 @@ pub fn on_chunk_load_or_unload(level: &impl JRef<'static>, pos: Point2<i32>) {
     let lk = objs().mtx.lock(level.jni()).unwrap();
     let mut srv = lk.server_state.borrow_mut();
     let srv = &mut *srv;
-    let Some(dim) = srv.dims.find(ti().id_hash(level.raw()).unwrap() as _, |x| level.is_same_object(x.level.0.raw)) else { return };
+    let Some(dim) = srv.dims.find(id_hash(level.raw()), |x| level.is_same_object(x.level.0.raw)) else { return };
     let Some(chunk) = dim.chunks.get(&pos) else { return };
     for &id in &chunk.beams {
         srv.beams.get_mut(&id).unwrap().dirty = true
@@ -317,11 +317,11 @@ pub fn del_beam(jni: &JNI, lk: &GlobalMtx, id: NonZeroUsize) {
     let beam = srv.beams.remove(&id).unwrap();
     for (player, p_hash) in beam.players {
         let player = player.replace_jni(jni);
-        srv.players.find_mut(p_hash as _, |x| player.is_same_object(x.player.0.raw)).unwrap().beams.remove(&id);
+        srv.players.find_mut(p_hash, |x| player.is_same_object(x.player.0.raw)).unwrap().beams.remove(&id);
         BeamState::send_del_beam(id, &player)
     }
     let level = beam.level.0.replace_jni(jni);
-    let Ok(mut d_entry) = srv.dims.find_entry(beam.level.1 as _, |x| level.is_same_object(x.level.0.raw)) else { unreachable!() };
+    let Ok(mut d_entry) = srv.dims.find_entry(beam.level.1, |x| level.is_same_object(x.level.0.raw)) else { unreachable!() };
     for pos in beam.chunks {
         let hash_map::Entry::Occupied(mut c_entry) = d_entry.get_mut().chunks.entry(pos) else { unreachable!() };
         c_entry.get_mut().beams.remove(&id);
@@ -363,7 +363,7 @@ pub fn set_beam_dir(lk: &GlobalMtx, jni: &'static JNI, id: NonZeroUsize, dir: Un
     let srv = &mut *srv;
     let beam = srv.beams.get_mut(&id).unwrap();
     let level = beam.level.0.with_jni(jni);
-    let dim = srv.dims.find_mut(beam.level.1 as _, |x| level.is_same_object(x.level.0.raw)).unwrap();
+    let dim = srv.dims.find_mut(beam.level.1, |x| level.is_same_object(x.level.0.raw)).unwrap();
     beam.dir = dir;
     beam.recompute(jni, &mut srv.players, dim, id);
     beam.broadcast_set_beam(jni, id)
