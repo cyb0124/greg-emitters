@@ -16,6 +16,7 @@ use crate::{
     mapping_base::{CSig, MSig},
     objs,
     registry::MOD_ID,
+    ti,
 };
 use alloc::{ffi::CString, format, sync::Arc, vec::Vec};
 use anyhow::{anyhow, ensure, Result};
@@ -33,6 +34,12 @@ pub trait UtilExt<'a>: JRef<'a> {
     fn static_field_1(&self, name: &CStr, sig: &CStr) -> GlobalRef<'a> {
         self.get_static_object_field(self.get_static_field_id(name, sig).unwrap()).unwrap().new_global_ref().unwrap()
     }
+}
+
+pub fn id_hash(obj: usize) -> u64 {
+    let hash = ti().id_hash(obj).unwrap() as u32 as u64;
+    // This should be fine given how hashbrown uses the hash.
+    hash << 32 | hash
 }
 
 pub fn strict_deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {

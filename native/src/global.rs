@@ -13,6 +13,7 @@ use crate::{
         client::{ClientDefs, Sprite},
         geometry::GeomExt,
         gui::GUIDefs,
+        id_hash,
         mapping::{ForgeCN, ForgeMN, ForgeMV, GregCN, GregMN, GregMV, CN, MN, MV},
         network::NetworkDefs,
         tile::{TileDefs, TileExt},
@@ -216,7 +217,7 @@ fn level_chunk_set_block_state_stub(jni: &JNI, _: usize, level: usize, pos: usiz
     let mtx = objs().mtx.lock(jni).unwrap();
     let mut srv = mtx.server_state.borrow_mut();
     let srv = &mut *srv;
-    let Some(dim) = srv.dims.find(ti().id_hash(level.raw).unwrap() as _, |x| level.is_same_object(x.level.0.raw)) else { return };
+    let Some(dim) = srv.dims.find(id_hash(level.raw), |x| level.is_same_object(x.level.0.raw)) else { return };
     let Some(block) = dim.blocks.get(&BorrowedRef::new(jni, &pos).read_vec3i()) else { return };
     match block {
         TrackedBlock::ByOne(id) => srv.beams.get_mut(id).unwrap().dirty = true,
