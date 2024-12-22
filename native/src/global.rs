@@ -53,6 +53,7 @@ pub struct GlobalObjs {
     pub mc_clear_level_stub: MSig,
     pub mtx: JMutex<'static, GlobalMtx>,
     pub net_defs: NetworkDefs,
+    pub matrix_data: GlobalRef<'static>,
     logger: GlobalRef<'static>,
     logger_warn: usize,
 }
@@ -121,6 +122,7 @@ impl GlobalObjs {
 
         Self {
             mtx: JMutex::new(av.jv.object.alloc_object().unwrap().new_global_ref().unwrap(), GlobalMtx::default()),
+            matrix_data: cls.jni.new_float_array(16).unwrap().new_global_ref().unwrap(),
             client_defs: mv.client.fmap(|_| ClientDefs::init(&av, &namer, &cn, &mn)),
             net_defs: NetworkDefs::init(&av, &namer, &cn, &mn, &mv, &fcn, &fmn),
             gui_defs: GUIDefs::init(&av, &cn, &mn, &fcn, &fmn, &namer),

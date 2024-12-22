@@ -353,7 +353,6 @@ pub struct CN<T> {
     pub pose_stack: T,
     pub pose: T,
     pub matrix4f: T,
-    pub matrix4fc: T,
     pub atlas: T,
     pub sprite: T,
     pub sheets: T,
@@ -473,7 +472,6 @@ impl CN<Arc<CSig>> {
             pose_stack: b"com.mojang.blaze3d.vertex.PoseStack",
             pose: b"com.mojang.blaze3d.vertex.PoseStack$Pose",
             matrix4f: b"org.joml.Matrix4f",
-            matrix4fc: b"org.joml.Matrix4fc",
             atlas: b"net.minecraft.client.renderer.texture.TextureAtlas",
             sprite: b"net.minecraft.client.renderer.texture.TextureAtlasSprite",
             sheets: b"net.minecraft.client.renderer.Sheets",
@@ -621,7 +619,7 @@ pub struct MN<T> {
     pub tile_renderer_provider_create: T,
     pub pose_pose: T,
     pub pose_stack_last: T,
-    pub matrix4fc_read: T,
+    pub matrix4f_get: T,
     pub atlas_loc: T,
     pub atlas_loc_blocks: T,
     pub atlas_get_sprite: T,
@@ -982,7 +980,7 @@ impl MN<MSig> {
             },
             pose_pose: MSig { owner: cn.pose.clone(), name: cs("pose"), sig: cn.matrix4f.sig.clone() },
             pose_stack_last: MSig { owner: cn.pose_stack.clone(), name: cs("last"), sig: msig([], cn.pose.sig.to_bytes()) },
-            matrix4fc_read: MSig { owner: cn.matrix4fc.clone(), name: cs("getToAddress"), sig: msig([B("J")], cn.matrix4fc.sig.to_bytes()) },
+            matrix4f_get: MSig { owner: cn.matrix4f.clone(), name: cs("get"), sig: cs("([F)[F") },
             atlas_loc: MSig { owner: cn.atlas.clone(), name: cs("location"), sig: msig([], cn.resource_loc.sig.to_bytes()) },
             atlas_loc_blocks: MSig { owner: cn.atlas.clone(), name: cs("LOCATION_BLOCKS"), sig: cn.resource_loc.sig.clone() },
             atlas_get_sprite: MSig {
@@ -1232,7 +1230,7 @@ pub struct MV {
 pub struct MVC {
     pub pose_pose: usize,
     pub pose_stack_last: usize,
-    pub matrix4fc_read: usize,
+    pub matrix4f_get: usize,
     pub atlas_loc: usize,
     pub atlas_loc_blocks: GlobalRef<'static>,
     pub atlas_get_sprite: usize,
@@ -1443,7 +1441,7 @@ impl MV {
             client: is_client.then(|| {
                 let pose = load(&cn.pose);
                 let pose_stack = load(&cn.pose_stack);
-                let matrix4fc = load(&cn.matrix4fc);
+                let matrix4f = load(&cn.matrix4f);
                 let atlas = load(&cn.atlas);
                 let sprite = load(&cn.sprite);
                 let vertex_consumer = load(&cn.vertex_consumer);
@@ -1466,7 +1464,7 @@ impl MV {
                 MVC {
                     pose_pose: mn.pose_pose.get_field_id(&pose).unwrap(),
                     pose_stack_last: mn.pose_stack_last.get_method_id(&pose_stack).unwrap(),
-                    matrix4fc_read: mn.matrix4fc_read.get_method_id(&matrix4fc).unwrap(),
+                    matrix4f_get: mn.matrix4f_get.get_method_id(&matrix4f).unwrap(),
                     atlas_loc: mn.atlas_loc.get_method_id(&atlas).unwrap(),
                     atlas_loc_blocks: atlas.static_field_2(&mn.atlas_loc_blocks),
                     atlas_get_sprite: mn.atlas_get_sprite.get_method_id(&atlas).unwrap(),
