@@ -7,9 +7,9 @@ use super::{
 };
 use crate::{global::GlobalMtx, jvm::*, mapping_base::*, objs, registry::make_resource_loc};
 use alloc::sync::Arc;
-use core::{ffi::CStr, mem::MaybeUninit};
+use core::ffi::CStr;
 use macros::dyn_abi;
-use nalgebra::{point, vector, Affine3, ArrayStorage, Matrix4, Point2, Point3, Vector3};
+use nalgebra::{point, vector, Affine3, Matrix4, Point2, Point3, Vector3};
 
 impl<'a, T: JRef<'a>> ClientExt<'a> for T {}
 pub trait ClientExt<'a>: JRef<'a> {
@@ -58,10 +58,9 @@ pub trait ClientExt<'a>: JRef<'a> {
     }
 
     // Called on Matrix4f
-    fn read_pose(&self) -> Affine3<f32> {
-        let mut pose_data = MaybeUninit::<ArrayStorage<f32, 4, 4>>::uninit();
-        self.call_object_method(objs().mv.client.uref().matrix4fc_read, &[pose_data.as_mut_ptr() as _]).unwrap();
-        Affine3::from_matrix_unchecked(Matrix4::from_data(unsafe { pose_data.assume_init() }))
+    fn read_pose(&self, _: &GlobalMtx) -> Affine3<f32> {
+        self.call_object_method(objs().mv.client.uref().matrix4f_get, &[objs().matrix_data.raw]).unwrap();
+        Affine3::from_matrix_unchecked(Matrix4::from_column_slice(&*objs().matrix_data.with_jni(self.jni()).crit_elems::<f32>().unwrap()))
     }
 }
 
@@ -214,7 +213,7 @@ fn screen_constructor_create(jni: &JNI, _: usize, menu: usize, inv: usize, title
 fn render_tile(jni: &JNI, _: usize, tile: usize, _: f32, pose_stack: usize, buffer_source: usize, light: i32, overlay: i32) {
     let lk = objs().mtx.lock(jni).unwrap();
     let sr = SolidRenderer::new(&lk, &BorrowedRef::new(jni, &buffer_source), light, overlay);
-    let pose = BorrowedRef::new(jni, &pose_stack).last_pose().read_pose();
+    let pose = BorrowedRef::new(jni, &pose_stack).last_pose().read_pose(&lk);
     objs().tile_defs.tile.read(&lk, BorrowedRef::new(jni, &tile)).render(&lk, sr, pose)
 }
 

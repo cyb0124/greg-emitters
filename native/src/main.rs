@@ -41,6 +41,9 @@ use core::{alloc::Layout, arch::asm, cell::SyncUnsafeCell, panic::PanicInfo};
 use global::GlobalObjs;
 use jvm::*;
 
+#[no_mangle]
+static mut ALLOC_FNS: [usize; 3] = [0; 3];
+
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
     'fail: {
@@ -84,10 +87,16 @@ struct GlobalAlloc;
 #[global_allocator]
 static GLOBAL_ALLOC: GlobalAlloc = GlobalAlloc;
 unsafe impl core::alloc::GlobalAlloc for GlobalAlloc {
-    unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) { ti().deallocate(ptr).unwrap() }
+    unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) { dyn_abi!((*mut u8), (), ALLOC_FNS[0], (ptr)) }
+
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         assert!(layout.align() <= 16);
-        ti().allocate(layout.size() as _).unwrap()
+        dyn_abi!((usize), *mut u8, ALLOC_FNS[1], (layout.size()))
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        assert!(layout.align() <= 16);
+        dyn_abi!((*mut u8, usize), *mut u8, ALLOC_FNS[2], (ptr, new_size))
     }
 }
 
