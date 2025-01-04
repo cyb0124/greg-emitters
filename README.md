@@ -1,3 +1,6 @@
+## Note
+This was an early proof of concept of writing a mod entirely in Rust. The focus was to avoid using JVM languages as much as possible, while still being functionally indistinguishable from a typical Java mod. My later mod [Curvy Pipes](https://www.curseforge.com/minecraft/mc-mods/curvy-pipes) uses similar techniques but is implemented in a more practical style: it is more focused on quality and performance, and has significantly less native/VM crossings.
+
 # GregTech Placeable Emitters
 This is a GregTech addon mod that makes the "Emitter" items placeable in-world. When powered, placed emitter blocks shoot beam that transfers energy to the block it hits.\
 ![Example](img-1.png)\
