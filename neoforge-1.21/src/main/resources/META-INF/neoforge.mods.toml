@@ -23,6 +23,6 @@ logoFile="icon.png"
 [[dependencies.${mod_id}]]
     modId="gtceu"
     mandatory=true
-    versionRange="[${gtceu_version},)"
+    versionRange="${gtceu_version_range}"
     ordering="BEFORE"
     side="BOTH"
