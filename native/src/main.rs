@@ -2,27 +2,6 @@
 #![no_main]
 #![feature(unsize, ptr_metadata, try_blocks, sync_unsafe_cell)]
 
-#[cfg(target_arch = "x86_64")]
-macro_rules! dyn_abi {
-    ($arg_types:tt, $ret:ty, $addr:expr, $arg_terms:tt) => {{
-        if unsafe { (*crate::ENV.get()).is_win } {
-            let func: extern "win64" fn $arg_types -> $ret = unsafe { core::mem::transmute($addr as *const ()) };
-            func $arg_terms
-        } else {
-            let func: extern "sysv64" fn $arg_types -> $ret = unsafe { core::mem::transmute($addr as *const ()) };
-            func $arg_terms
-        }
-    }};
-}
-
-#[cfg(target_arch = "aarch64")]
-macro_rules! dyn_abi {
-    ($arg_types:tt, $ret:ty, $addr:expr, $arg_terms:tt) => {{
-        let func: extern "C" fn $arg_types -> $ret = unsafe { core::mem::transmute($addr as *const ()) };
-        func $arg_terms
-    }};
-}
-
 pub mod asm;
 mod beams;
 mod emitter_blocks;
