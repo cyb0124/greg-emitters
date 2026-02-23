@@ -35,15 +35,11 @@ public class Mod {
         }
         mem.write(0, blob, 0, len);
         buf.position(len);
-        while (buf.remaining() > 16) {
+        while (buf.remaining() > 12) {
             mem.setLong(buf.getInt(), Pointer.nativeValue(mem) + buf.getInt());
         }
         long execLen = (long) buf.getInt() * 4096;
-        long allocFns = buf.getInt();
         NativeLibrary c = NativeLibrary.getInstance(Platform.isWindows() ? "msvcrt" : "c");
-        mem.setPointer(allocFns, c.getFunction("free"));
-        mem.setPointer(allocFns + 8, c.getFunction("malloc"));
-        mem.setPointer(allocFns + 16, c.getFunction("realloc"));
         if (Platform.isWindows()) {
             NativeLibrary.getInstance("kernel32").getFunction("VirtualProtect").invoke(new Object[]{mem, execLen, WinNT.PAGE_EXECUTE_READ, new WinDef.DWORDByReference()});
             mem = mem.share(buf.getInt());

@@ -32,8 +32,6 @@ for arch in ARCHS:
   exec_size, _ = find_symbol(map, ' out_rw')
   assert exec_size % 4096 == 0
   out += (exec_size // 4096).to_bytes(4, 'big')
-  alloc_fns, _ = find_symbol(map, ' ALLOC_FNS')
-  out += alloc_fns.to_bytes(4, 'big')
   win = find_symbol(map, ' entry_win64')[0] if arch == 'x64' else 0
   out += win.to_bytes(4, 'big')
   out += reloc.to_bytes(4, 'big')
